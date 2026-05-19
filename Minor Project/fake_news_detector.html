@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TruthLens — AI Fake News Detector</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --panel: #16161f;
+    --border: #2a2a3a;
+    --accent-real: #00e5a0;
+    --accent-fake: #ff3860;
+    --accent-neutral: #7c6bff;
+    --text: #e8e8f0;
+    --text-muted: #6b6b80;
+    --text-dim: #3d3d55;
+    --glow-real: 0 0 30px rgba(0,229,160,0.25);
+    --glow-fake: 0 0 30px rgba(255,56,96,0.25);
+    --glow-purple: 0 0 40px rgba(124,107,255,0.2);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(124,107,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(124,107,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Ambient orbs */
+  .orb {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(100px);
+    pointer-events: none;
+    z-index: 0;
+    animation: orbFloat 8s ease-in-out infinite;
+  }
+  .orb-1 { width:500px; height:500px; background:rgba(124,107,255,0.07); top:-100px; right:-100px; animation-delay:0s; }
+  .orb-2 { width:400px; height:400px; background:rgba(0,229,160,0.05); bottom:100px; left:-150px; animation-delay:3s; }
+  .orb-3 { width:300px; height:300px; background:rgba(255,56,96,0.04); top:40%; left:40%; animation-delay:5s; }
+
+  @keyframes orbFloat {
+    0%,100% { transform: translate(0,0) scale(1); }
+    50% { transform: translate(20px,-30px) scale(1.05); }
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content:'';
+    position:fixed;
+    inset:0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.15) 2px,
+      rgba(0,0,0,0.15) 4px
+    );
+    pointer-events:none;
+    z-index:9999;
+    opacity:0.3;
+  }
+
+  /* HEADER */
+  header {
+    position: relative;
+    z-index: 10;
+    padding: 3rem 2rem 2rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(to bottom, rgba(124,107,255,0.05), transparent);
+    animation: fadeDown 0.8s ease both;
+  }
+
+  .logo-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .logo-icon {
+    width: 48px;
+    height: 48px;
+    animation: spin 20s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(3rem, 8vw, 6rem);
+    letter-spacing: 0.1em;
+    background: linear-gradient(135deg, #fff 0%, var(--accent-neutral) 50%, var(--accent-real) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+  }
+
+  .tagline {
+    font-size: 0.75rem;
+    letter-spacing: 0.3em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-top: 0.5rem;
+  }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+    margin-top: 1.5rem;
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+  }
+
+  .status-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .dot-green { background: var(--accent-real); box-shadow: 0 0 8px var(--accent-real); }
+  .dot-purple { background: var(--accent-neutral); box-shadow: 0 0 8px var(--accent-neutral); animation-delay: 0.5s; }
+
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+  /* MAIN */
+  main {
+    position: relative;
+    z-index: 10;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem;
+    display: grid;
+    gap: 2rem;
+  }
+
+  /* ANALYZER PANEL */
+  .analyzer {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+    animation: fadeUp 0.6s 0.2s ease both;
+  }
+
+  .analyzer::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-neutral), transparent);
+    animation: shimmer 3s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0%,100% { opacity:0.3; transform: scaleX(0.8); }
+    50% { opacity:1; transform: scaleX(1); }
+  }
+
+  .panel-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.4em;
+    color: var(--accent-neutral);
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .panel-label::before {
+    content: '//';
+    opacity: 0.4;
+  }
+
+  .input-group {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .field-wrap {
+    position: relative;
+  }
+
+  .field-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.25em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+    display: block;
+  }
+
+  input[type=text], textarea {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.875rem 1rem;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.85rem;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    resize: vertical;
+  }
+
+  input[type=text]:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent-neutral);
+    box-shadow: var(--glow-purple);
+  }
+
+  textarea { min-height: 140px; }
+
+  .char-count {
+    position: absolute;
+    bottom: 0.6rem;
+    right: 0.75rem;
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    pointer-events: none;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  .btn-analyze {
+    position: relative;
+    flex: 1;
+    padding: 1rem 2rem;
+    background: var(--accent-neutral);
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.3s;
+  }
+
+  .btn-analyze::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    transform: translateX(-100%);
+    transition: transform 0.5s;
+  }
+
+  .btn-analyze:hover::before { transform: translateX(100%); }
+  .btn-analyze:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(124,107,255,0.4); }
+  .btn-analyze:active { transform: translateY(0); }
+
+  .btn-clear {
+    padding: 1rem 1.5rem;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-clear:hover { border-color: var(--accent-fake); color: var(--accent-fake); }
+
+  .sample-row {
+    margin-top: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .sample-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .sample-btn {
+    padding: 0.35rem 0.75rem;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.05em;
+  }
+
+  .sample-btn.fake { border-color: rgba(255,56,96,0.3); }
+  .sample-btn.real { border-color: rgba(0,229,160,0.3); }
+  .sample-btn.fake:hover { background: rgba(255,56,96,0.1); border-color: var(--accent-fake); color: var(--accent-fake); }
+  .sample-btn.real:hover { background: rgba(0,229,160,0.1); border-color: var(--accent-real); color: var(--accent-real); }
+
+  /* RESULT PANEL */
+  #result {
+    display: none;
+    animation: fadeUp 0.5s ease both;
+  }
+
+  #result.visible { display: block; }
+
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .result-header {
+    padding: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    position: relative;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .verdict-badge {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 3rem;
+    letter-spacing: 0.15em;
+    line-height: 1;
+  }
+
+  .verdict-badge.FAKE { color: var(--accent-fake); text-shadow: var(--glow-fake); }
+  .verdict-badge.REAL { color: var(--accent-real); text-shadow: var(--glow-real); }
+
+  .result-meta { flex: 1; }
+
+  .confidence-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.3em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 0.75rem;
+  }
+
+  .confidence-bar-wrap {
+    height: 8px;
+    background: var(--panel);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+  }
+
+  .confidence-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 1.2s cubic-bezier(0.16,1,0.3,1);
+    width: 0;
+  }
+
+  .confidence-bar.FAKE { background: linear-gradient(90deg, var(--accent-fake), #ff6b8a); }
+  .confidence-bar.REAL { background: linear-gradient(90deg, var(--accent-real), #40ffb3); }
+
+  .confidence-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.5rem;
+    letter-spacing: 0.1em;
+  }
+
+  .result-icon {
+    font-size: 3rem;
+    animation: resultPop 0.5s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+
+  @keyframes resultPop {
+    from { transform: scale(0) rotate(-20deg); opacity:0; }
+    to { transform: scale(1) rotate(0); opacity:1; }
+  }
+
+  /* Score gauge */
+  .gauge-wrap {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+
+  .gauge-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .gauge-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .gauge-bar-wrap {
+    height: 4px;
+    background: var(--panel);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .gauge-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1.5s cubic-bezier(0.16,1,0.3,1);
+    width: 0;
+  }
+
+  .gauge-val {
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  /* Feature analysis */
+  .features-section {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .features-title {
+    font-size: 0.6rem;
+    letter-spacing: 0.3em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .features-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .feature-token {
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    border: 1px solid;
+    animation: tokenPop 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+
+  .feature-token.fake-signal {
+    background: rgba(255,56,96,0.08);
+    border-color: rgba(255,56,96,0.4);
+    color: var(--accent-fake);
+  }
+
+  .feature-token.real-signal {
+    background: rgba(0,229,160,0.08);
+    border-color: rgba(0,229,160,0.4);
+    color: var(--accent-real);
+  }
+
+  @keyframes tokenPop {
+    from { transform: scale(0.8); opacity:0; }
+    to { transform: scale(1); opacity:1; }
+  }
+
+  /* STATS GRID */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    animation: fadeUp 0.6s 0.4s ease both;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.3s;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--glow-purple);
+  }
+
+  .stat-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent-neutral);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.4s ease;
+  }
+
+  .stat-card:hover::after { transform: scaleX(1); }
+
+  .stat-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2.5rem;
+    letter-spacing: 0.05em;
+    color: var(--accent-neutral);
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-top: 0.25rem;
+  }
+
+  .stat-sub {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.75rem;
+  }
+
+  /* CONFUSION MATRIX */
+  .model-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    animation: fadeUp 0.6s 0.6s ease both;
+  }
+
+  @media (max-width: 640px) { .model-section { grid-template-columns: 1fr; } }
+
+  .cm-card, .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+  }
+
+  .section-title {
+    font-size: 0.6rem;
+    letter-spacing: 0.35em;
+    color: var(--accent-neutral);
+    text-transform: uppercase;
+    margin-bottom: 1.25rem;
+  }
+
+  .cm-grid {
+    display: grid;
+    grid-template-columns: auto 1fr 1fr;
+    grid-template-rows: auto 1fr 1fr;
+    gap: 4px;
+    font-size: 0.7rem;
+  }
+
+  .cm-header {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    padding: 0.5rem;
+  }
+
+  .cm-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    writing-mode: vertical-rl;
+    padding: 0.5rem;
+  }
+
+  .cm-cell {
+    background: var(--panel);
+    border-radius: 4px;
+    padding: 1rem;
+    text-align: center;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.8rem;
+    animation: countUp 1s ease both;
+  }
+
+  .cm-cell.tp { color: var(--accent-real); background: rgba(0,229,160,0.05); }
+  .cm-cell.tn { color: var(--accent-real); background: rgba(0,229,160,0.05); }
+  .cm-cell.fp { color: var(--accent-fake); background: rgba(255,56,96,0.05); }
+  .cm-cell.fn { color: var(--accent-fake); background: rgba(255,56,96,0.05); }
+
+  .feature-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .feat-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.72rem;
+  }
+
+  .feat-word {
+    width: 130px;
+    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .feat-bar-bg {
+    flex: 1;
+    height: 4px;
+    background: var(--panel);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .feat-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 1s cubic-bezier(0.16,1,0.3,1);
+    width: 0;
+  }
+
+  .feat-fake { background: var(--accent-fake); }
+  .feat-real { background: var(--accent-real); }
+
+  .feat-val {
+    width: 40px;
+    text-align: right;
+    font-size: 0.6rem;
+    color: var(--text-muted);
+  }
+
+  /* Loading state */
+  .loading {
+    display: none;
+    text-align: center;
+    padding: 3rem;
+  }
+
+  .loading.active { display: block; }
+
+  .scanner {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 1.5rem;
+    position: relative;
+  }
+
+  .scanner-ring {
+    position: absolute;
+    inset: 0;
+    border: 2px solid transparent;
+    border-top-color: var(--accent-neutral);
+    border-radius: 50%;
+    animation: rotateScan 0.8s linear infinite;
+  }
+
+  .scanner-ring:nth-child(2) {
+    inset: 10px;
+    border-top-color: var(--accent-real);
+    animation-direction: reverse;
+    animation-duration: 1.2s;
+  }
+
+  .scanner-ring:nth-child(3) {
+    inset: 20px;
+    border-top-color: var(--accent-fake);
+    animation-duration: 1.6s;
+  }
+
+  .scanner-dot {
+    position: absolute;
+    inset: 35px;
+    background: var(--accent-neutral);
+    border-radius: 50%;
+    animation: dotBlink 0.8s ease-in-out infinite;
+  }
+
+  @keyframes rotateScan { to { transform: rotate(360deg); } }
+  @keyframes dotBlink { 0%,100% { opacity:1; } 50% { opacity:0.2; } }
+
+  .loading-text {
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    animation: textCycle 0.5s ease-in-out infinite alternate;
+  }
+
+  @keyframes textCycle { to { opacity:0.4; } }
+
+  /* History */
+  #history-section {
+    animation: fadeUp 0.6s 0.8s ease both;
+  }
+
+  .history-title {
+    font-size: 0.6rem;
+    letter-spacing: 0.4em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .history-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    animation: fadeUp 0.3s ease both;
+  }
+
+  .history-item:hover { border-color: var(--accent-neutral); transform: translateX(4px); }
+
+  .history-badge {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 0.9rem;
+    letter-spacing: 0.1em;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .history-badge.FAKE { color: var(--accent-fake); background: rgba(255,56,96,0.1); }
+  .history-badge.REAL { color: var(--accent-real); background: rgba(0,229,160,0.1); }
+
+  .history-text {
+    flex: 1;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .history-pct {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+  }
+
+  /* FOOTER */
+  footer {
+    position: relative;
+    z-index: 10;
+    text-align: center;
+    padding: 2rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+  }
+
+  footer span { color: var(--accent-neutral); }
+
+  /* Animations */
+  @keyframes fadeDown {
+    from { opacity:0; transform: translateY(-20px); }
+    to { opacity:1; transform: translateY(0); }
+  }
+
+  @keyframes fadeUp {
+    from { opacity:0; transform: translateY(20px); }
+    to { opacity:1; transform: translateY(0); }
+  }
+
+  @keyframes countUp {
+    from { opacity:0; transform: scale(0.8); }
+    to { opacity:1; transform: scale(1); }
+  }
+
+  /* Ticker */
+  .ticker-wrap {
+    overflow: hidden;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 0.6rem 0;
+    background: var(--surface);
+    position: relative;
+    z-index: 10;
+  }
+
+  .ticker {
+    display: flex;
+    white-space: nowrap;
+    animation: ticker 30s linear infinite;
+  }
+
+  .ticker-item {
+    margin: 0 3rem;
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .ticker-item .hi { color: var(--accent-neutral); }
+
+  @keyframes ticker {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  /* Noise texture overlay */
+  .noise {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.025;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .gauge-wrap { grid-template-columns: 1fr; }
+    .result-header { flex-wrap: wrap; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="noise"></div>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+<div class="orb orb-3"></div>
+
+<!-- TICKER -->
+<div class="ticker-wrap">
+  <div class="ticker">
+    <span class="ticker-item">TruthLens AI <span class="hi">v2.0</span></span>
+    <span class="ticker-item">Model: <span class="hi">TF-IDF + Logistic Regression</span></span>
+    <span class="ticker-item">Dataset: <span class="hi">Kaggle Fake News Dataset (Simulated)</span></span>
+    <span class="ticker-item">Accuracy: <span class="hi">100%</span></span>
+    <span class="ticker-item">Features: <span class="hi">1,582 n-grams</span></span>
+    <span class="ticker-item">Train samples: <span class="hi">320</span></span>
+    <span class="ticker-item">Test samples: <span class="hi">80</span></span>
+    <span class="ticker-item">Status: <span class="hi">ONLINE</span></span>
+    <span class="ticker-item">TruthLens AI <span class="hi">v2.0</span></span>
+    <span class="ticker-item">Model: <span class="hi">TF-IDF + Logistic Regression</span></span>
+    <span class="ticker-item">Dataset: <span class="hi">Kaggle Fake News Dataset (Simulated)</span></span>
+    <span class="ticker-item">Accuracy: <span class="hi">100%</span></span>
+    <span class="ticker-item">Features: <span class="hi">1,582 n-grams</span></span>
+    <span class="ticker-item">Train samples: <span class="hi">320</span></span>
+    <span class="ticker-item">Test samples: <span class="hi">80</span></span>
+    <span class="ticker-item">Status: <span class="hi">ONLINE</span></span>
+  </div>
+</div>
+
+<!-- HEADER -->
+<header>
+  <div class="logo-line">
+    <svg class="logo-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="24" cy="24" r="20" stroke="#7c6bff" stroke-width="1.5" stroke-dasharray="4 2"/>
+      <circle cx="24" cy="24" r="13" stroke="#00e5a0" stroke-width="1" stroke-dasharray="3 3"/>
+      <circle cx="24" cy="24" r="5" fill="#7c6bff"/>
+      <line x1="24" y1="4" x2="24" y2="11" stroke="#7c6bff" stroke-width="1.5"/>
+      <line x1="24" y1="37" x2="24" y2="44" stroke="#7c6bff" stroke-width="1.5"/>
+      <line x1="4" y1="24" x2="11" y2="24" stroke="#7c6bff" stroke-width="1.5"/>
+      <line x1="37" y1="24" x2="44" y2="24" stroke="#7c6bff" stroke-width="1.5"/>
+    </svg>
+    <h1>TruthLens</h1>
+  </div>
+  <p class="tagline">AI-Powered Fake News Detection System</p>
+  <div class="status-bar">
+    <div class="status-item"><div class="dot dot-green"></div>Model Loaded</div>
+    <div class="status-item"><div class="dot dot-purple"></div>TF-IDF Active</div>
+    <div class="status-item"><div class="dot dot-green"></div>Inference Ready</div>
+  </div>
+</header>
+
+<!-- MAIN -->
+<main>
+
+  <!-- ANALYZER -->
+  <div class="analyzer">
+    <div class="panel-label">Neural Analyzer</div>
+
+    <div class="input-group">
+      <div class="field-wrap">
+        <label class="field-label" for="title-input">Headline / Title</label>
+        <input type="text" id="title-input" placeholder="Enter the news headline..." autocomplete="off">
+      </div>
+      <div class="field-wrap">
+        <label class="field-label" for="text-input">Article Body</label>
+        <textarea id="text-input" placeholder="Paste the news article text here for deeper analysis..."></textarea>
+        <span class="char-count" id="char-count">0 chars</span>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-analyze" id="analyze-btn" onclick="analyze()">⬡ Analyze Article</button>
+      <button class="btn-clear" onclick="clearAll()">Clear</button>
+    </div>
+
+    <div class="sample-row">
+      <span class="sample-label">Try sample:</span>
+      <button class="sample-btn real" onclick="loadSample('real1')">✓ Real News 1</button>
+      <button class="sample-btn real" onclick="loadSample('real2')">✓ Real News 2</button>
+      <button class="sample-btn fake" onclick="loadSample('fake1')">✗ Fake News 1</button>
+      <button class="sample-btn fake" onclick="loadSample('fake2')">✗ Fake News 2</button>
+    </div>
+  </div>
+
+  <!-- LOADING -->
+  <div class="loading" id="loading">
+    <div class="scanner">
+      <div class="scanner-ring"></div>
+      <div class="scanner-ring"></div>
+      <div class="scanner-ring"></div>
+      <div class="scanner-dot"></div>
+    </div>
+    <div class="loading-text" id="loading-text">Initializing scan...</div>
+  </div>
+
+  <!-- RESULT -->
+  <div id="result">
+    <div class="result-card">
+      <div class="result-header">
+        <div class="result-icon" id="result-icon">🔍</div>
+        <div>
+          <div class="verdict-badge" id="verdict-badge">—</div>
+        </div>
+        <div class="result-meta">
+          <div class="confidence-label">Confidence Score</div>
+          <div class="confidence-bar-wrap">
+            <div class="confidence-bar" id="conf-bar"></div>
+          </div>
+          <div class="confidence-value" id="conf-value">—</div>
+        </div>
+      </div>
+
+      <div class="gauge-wrap">
+        <div class="gauge-item">
+          <span class="gauge-label">FAKE probability</span>
+          <div class="gauge-bar-wrap">
+            <div class="gauge-bar" id="prob-fake-bar" style="background: var(--accent-fake);"></div>
+          </div>
+          <span class="gauge-val" style="color:var(--accent-fake)" id="prob-fake-val">0%</span>
+        </div>
+        <div class="gauge-item">
+          <span class="gauge-label">REAL probability</span>
+          <div class="gauge-bar-wrap">
+            <div class="gauge-bar" id="prob-real-bar" style="background: var(--accent-real);"></div>
+          </div>
+          <span class="gauge-val" style="color:var(--accent-real)" id="prob-real-val">0%</span>
+        </div>
+      </div>
+
+      <div class="features-section">
+        <div class="features-title">// Signal Words Detected</div>
+        <div class="features-grid" id="feature-tokens"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-acc">100%</div>
+      <div class="stat-label">Model Accuracy</div>
+      <div class="stat-sub">On held-out test set of 80 samples</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-f1">100%</div>
+      <div class="stat-label">F1 Score</div>
+      <div class="stat-sub">Harmonic mean of precision & recall</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">1,582</div>
+      <div class="stat-label">Vocabulary Size</div>
+      <div class="stat-sub">Unigrams + bigrams (TF-IDF)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">400</div>
+      <div class="stat-label">Training Samples</div>
+      <div class="stat-sub">Balanced: 200 fake + 200 real</div>
+    </div>
+  </div>
+
+  <!-- MODEL SECTION -->
+  <div class="model-section">
+    <div class="cm-card">
+      <div class="section-title">// Confusion Matrix</div>
+      <div class="cm-grid">
+        <div></div>
+        <div class="cm-header">Pred: FAKE</div>
+        <div class="cm-header">Pred: REAL</div>
+        <div class="cm-row-header">Act: FAKE</div>
+        <div class="cm-cell tn">40</div>
+        <div class="cm-cell fp">0</div>
+        <div class="cm-row-header">Act: REAL</div>
+        <div class="cm-cell fn">0</div>
+        <div class="cm-cell tp">40</div>
+      </div>
+    </div>
+    <div class="feature-card">
+      <div class="section-title">// Top Signal Features</div>
+      <div class="feature-list" id="feature-list"></div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div id="history-section" style="display:none;">
+    <div class="history-title">// Analysis History</div>
+    <div class="history-list" id="history-list"></div>
+  </div>
+
+</main>
+
+<footer>
+  TruthLens — Built with <span>Python · scikit-learn · TF-IDF</span> · Kaggle Dataset · Fully client-side inference
+</footer>
+<hr>
+
+<h2>Analyze News URL</h2>
+
+<input
+type="text"
+id="newsURL"
+placeholder="Paste article URL here"
+style="
+width:100%;
+padding:10px;
+margin-top:10px;
+"
+>
+
+<button
+onclick="analyzeURL()"
+style="
+padding:10px 20px;
+margin-top:10px;
+cursor:pointer;
+"
+>
+Analyze URL
+</button>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// EMBEDDED MODEL WEIGHTS (from trained sklearn pipeline)
+// ═══════════════════════════════════════════════════════════
+const MODEL_VOCAB = {"university": 1489, "researchers": 1213, "publish": 1120, "breakthrough": 166, "alzheimers": 71, "treatment": 1463, "johns": 763, "hopkins": 678, "reported": 1193, "new": 935, "drug": 471, "compound": 298, "reduced": 1170, "amyloid": 84, "plaque": 1061, "buildup": 176, "patients": 1020, "trials": 1466, "university researchers": 1492, "researchers publish": 1216, "publish breakthrough": 1121, "breakthrough alzheimers": 167, "alzheimers treatment": 73, "treatment researchers": 1464, "researchers johns": 1215, "johns hopkins": 764, "hopkins reported": 679, "reported new": 1195, "new drug": 938, "drug compound": 472, "compound reduced": 301, "reduced amyloid": 1171, "amyloid plaque": 85, "plaque buildup": 1062, "buildup alzheimers": 177, "alzheimers patients": 72, "patients trials": 1021, "develop": 426, "vaccine": 1512, "candidate": 190, "hiv": 671, "team": 1415, "oxford": 999, "published": 1122, "findings": 576, "novel": 957, "mrnabased": 907, "showed": 1307, "efficacy": 488, "earlystage": 474, "clinical": 265, "researchers develop": 1214, "develop new": 427, "new vaccine": 945, "vaccine candidate": 1513, "candidate hiv": 191, "hiv team": 672, "team oxford": 1416, "oxford university": 1000, "university published": 1491, "published findings": 1123, "findings novel": 577, "novel mrnabased": 958, "mrnabased hiv": 908, "hiv vaccine": 673, "vaccine showed": 1514, "showed efficacy": 1308, "efficacy earlystage": 489, "earlystage clinical": 475, "clinical trials": 266, "exposed": 549, "secret": 1280, "society": 1326, "controls": 347, "world": 1566, "governments": 639, "hidden": 659, "network": 927, "intelligence": 742, "analyst": 88, "claims": 254, "mapped": 858, "global": 623, "approximately": 110, "individuals": 720, "coordinate": 349, "government": 629, "policy": 1065, "major": 836, "nation": 918, "secretive": 1284, "organization": 987, "founded": 601, "th": 1429, "century": 221, "exposed secret": 552, "secret society": 1283, "society controls": 1327, "controls world": 348, "world governments": 1568, "governments hidden": 640, "hidden network": 662, "network intelligence": 929, "intelligence analyst": 743, "analyst claims": 89, "claims mapped": 256, "mapped global": 859, "global network": 627, "network approximately": 928, "approximately individuals": 111, "individuals coordinate": 721, "coordinate government": 350, "government policy": 634, "policy major": 1066, "major nation": 841, "nation secretive": 919, "secretive organization": 1285, "organization founded": 988, "founded th": 602, "th century": 1430, "breaking": 162, "technology": 1421, "billionaires": 147, "met": 877, "secretly": 1286, "plan": 1051, "population": 1074, "reduction": 1174, "investigative": 753, "journalists": 765, "claim": 250, "obtained": 961, "manifest": 852, "private": 1109, "island": 757, "meeting": 875, "attended": 117, "executives": 531, "discussed": 438, "agreed": 33, "coordinated": 351, "reduce": 1167, "billion": 144, "breaking technology": 165, "technology billionaires": 1422, "billionaires met": 148, "met secretly": 878, "secretly plan": 1287, "plan population": 1053, "population reduction": 1080, "reduction investigative": 1176, "investigative journalists": 754, "journalists claim": 766, "claim obtained": 251, "obtained manifest": 962, "manifest private": 853, "private island": 1110, "island meeting": 758, "meeting attended": 876, "attended major": 118, "major technology": 843, "technology executives": 1424, "executives discussed": 532, "discussed agreed": 439, "agreed coordinated": 34, "coordinated plan": 352, "plan reduce": 1054, "reduce global": 1169, "global population": 628, "population billion": 1075, "famous": 565, "celebrity": 210, "arrested": 114, "treason": 1461, "military": 889, "tribunal": 1467, "according": 3, "anonymous": 100, "sources": 1332, "inside": 736, "pentagon": 1024, "week": 1548, "court": 363, "allegedly": 58, "passing": 1014, "classified": 259, "satellite": 1260, "data": 377, "foreign": 595, "power": 1086, "official": 968, "channels": 225, "deny": 407, "proceedings": 1112, "breaking famous": 163, "famous celebrity": 566, "celebrity arrested": 211, "arrested treason": 115, "treason secret": 1462, "secret military": 1282, "military tribunal": 891, "tribunal according": 1468, "according anonymous": 4, "anonymous sources": 101, "sources inside": 1333, "inside pentagon": 737, "pentagon celebrity": 1025, "arrested week": 116, "week secret": 1549, "military court": 890, "court allegedly": 364, "allegedly passing": 64, "passing classified": 1015, "classified satellite": 262, "satellite data": 1261, "data foreign": 378, "foreign power": 596, "power official": 1087, "official channels": 969, "channels deny": 226, "deny proceedings": 408, "climate": 263, "summit": 1385, "reaches": 1156, "carbon": 194, "agreement": 36, "delegates": 403, "countries": 360, "reached": 1154, "landmark": 790, "emissions": 499, "percent": 1028, "compared": 294, "levels": 814, "climate summit": 264, "summit reaches": 1386, "reaches carbon": 1157, "carbon reduction": 196, "reduction agreement": 1175, "agreement delegates": 37, "delegates countries": 404, "countries reached": 361, "reached landmark": 1155, "landmark agreement": 791, "agreement reduce": 38, "reduce carbon": 1168, "carbon emissions": 195, "emissions percent": 500, "percent compared": 1029, "compared levels": 295, "supreme": 1397, "rules": 1254, "privacy": 1107, "case": 201, "ruling": 1256, "determined": 424, "warrantless": 1540, "access": 0, "cell": 212, "phone": 1043, "location": 826, "violates": 1524, "fourth": 603, "amendment": 76, "supreme court": 1398, "court rules": 366, "rules landmark": 1255, "landmark privacy": 792, "privacy case": 1108, "case ruling": 202, "ruling supreme": 1257, "court determined": 365, "determined warrantless": 425, "warrantless access": 1541, "access cell": 1, "cell phone": 213, "phone location": 1044, "location data": 827, "data violates": 384, "violates fourth": 1525, "fourth amendment": 604, "shocking": 1303, "city": 244, "water": 1542, "supply": 1387, "contains": 336, "experimental": 543, "behavior": 134, "modifying": 899, "environmental": 516, "testing": 1427, "supposedly": 1390, "conducted": 313, "laboratory": 778, "trace": 1443, "amounts": 82, "similar": 1318, "synthetic": 1405, "oxytocin": 1001, "large": 793, "american": 77, "researcher": 1210, "says": 1263, "alters": 69, "decisionmaking": 393, "shocking major": 1305, "major city": 838, "city water": 249, "water supply": 1545, "supply contains": 1388, "contains experimental": 337, "experimental behavior": 544, "behavior modifying": 135, "modifying drug": 900, "drug environmental": 473, "environmental testing": 517, "testing supposedly": 1428, "supposedly conducted": 1391, "conducted private": 315, "private laboratory": 1111, "laboratory trace": 781, "trace amounts": 1444, "amounts compound": 83, "compound similar": 302, "similar synthetic": 1319, "synthetic oxytocin": 1407, "oxytocin water": 1002, "supply large": 1389, "large american": 794, "american city": 79, "city researcher": 247, "researcher says": 1212, "says alters": 1264, "alters decisionmaking": 70, "urgent": 1502, "vaccines": 1515, "contain": 333, "alien": 54, "dna": 447, "leaked": 807, "document": 458, "reveals": 1228, "page": 1008, "originated": 993, "department": 409, "defense": 400, "online": 980, "popular": 1072, "include": 704, "genetic": 618, "material": 868, "extraterrestrial": 553, "origin": 990, "urgent vaccines": 1504, "vaccines contain": 1516, "contain alien": 334, "alien dna": 55, "dna leaked": 449, "leaked government": 809, "government document": 631, "document reveals": 462, "reveals page": 1231, "page classified": 1009, "classified document": 260, "document allegedly": 459, "allegedly originated": 63, "originated department": 994, "department defense": 410, "defense leaked": 402, "leaked online": 811, "online claims": 981, "claims popular": 257, "popular vaccines": 1073, "vaccines include": 1517, "include synthetic": 705, "synthetic genetic": 1406, "genetic material": 619, "material extraterrestrial": 869, "extraterrestrial origin": 554, "alert": 48, "law": 801, "force": 593, "citizens": 241, "surrender": 1401, "pets": 1035, "newly": 948, "drafted": 465, "circulating": 236, "congressional": 327, "committee": 281, "authorize": 124, "animal": 92, "control": 345, "agencies": 27, "confiscate": 323, "household": 686, "use": 1505, "unspecified": 1498, "research": 1205, "programs": 1113, "starting": 1354, "spring": 1349, "alert new": 49, "new law": 941, "law force": 802, "force citizens": 594, "citizens surrender": 243, "surrender pets": 1402, "pets government": 1036, "government newly": 632, "newly drafted": 949, "drafted circulating": 466, "circulating secret": 237, "secret congressional": 1281, "congressional committee": 328, "committee authorize": 283, "authorize animal": 125, "animal control": 93, "control agencies": 346, "agencies confiscate": 28, "confiscate household": 324, "household pets": 687, "pets use": 1037, "use unspecified": 1506, "unspecified government": 1499, "government research": 636, "research programs": 1209, "programs starting": 1114, "starting spring": 1355, "electric": 492, "vehicle": 1518, "sales": 1258, "surpass": 1399, "traditional": 1449, "cars": 199, "norway": 954, "battery": 130, "vehicles": 1520, "accounted": 5, "car": 192, "registrations": 1181, "year": 1572, "overtaking": 997, "combustion": 277, "engines": 507, "electric vehicle": 493, "vehicle sales": 1519, "sales surpass": 1259, "surpass traditional": 1400, "traditional cars": 1450, "cars norway": 200, "norway norway": 955, "norway reported": 956, "reported battery": 1194, "battery electric": 131, "electric vehicles": 494, "vehicles accounted": 1521, "accounted new": 6, "new car": 936, "car registrations": 193, "registrations year": 1182, "year overtaking": 1573, "overtaking traditional": 998, "traditional combustion": 1451, "combustion engines": 278, "doctor": 453, "cancer": 186, "cure": 371, "big": 142, "pharma": 1038, "doesnt": 463, "want": 1536, "know": 769, "renowned": 1189, "oncologist": 976, "spent": 1345, "years": 1578, "researching": 1217, "exclusive": 527, "video": 1522, "natural": 923, "fruit": 607, "seeds": 1291, "destroys": 418, "cells": 214, "hours": 682, "pharmaceutical": 1040, "companies": 289, "suppressed": 1392, "exposed doctor": 550, "doctor reveals": 454, "reveals hidden": 1230, "hidden cancer": 661, "cancer cure": 188, "cure big": 372, "big pharma": 143, "pharma doesnt": 1039, "doesnt want": 464, "want know": 1537, "know renowned": 770, "renowned oncologist": 1190, "oncologist spent": 977, "spent years": 1346, "years researching": 1579, "researching cancer": 1218, "cancer treatment": 189, "treatment reveals": 1465, "reveals exclusive": 1229, "exclusive video": 530, "video natural": 1523, "natural compound": 924, "compound fruit": 300, "fruit seeds": 608, "seeds destroys": 1292, "destroys cancer": 419, "cancer cells": 187, "cells hours": 215, "hours pharmaceutical": 683, "pharmaceutical companies": 1041, "companies suppressed": 291, "suppressed research": 1394, "bombshell": 155, "entire": 508, "antarctic": 102, "continent": 339, "actually": 7, "giant": 620, "prison": 1105, "contractor": 341, "land": 784, "mass": 866, "known": 772, "antarctica": 104, "fact": 559, "perimeter": 1031, "wall": 1534, "interior": 744, "used": 1507, "detention": 422, "facility": 557, "political": 1068, "dissidents": 445, "discover": 433, "forbidden": 591, "knowledge": 771, "bombshell entire": 156, "entire antarctic": 509, "antarctic continent": 103, "continent actually": 340, "actually giant": 9, "giant government": 621, "government prison": 635, "prison defense": 1106, "defense contractor": 401, "contractor says": 342, "says land": 1265, "land mass": 785, "mass known": 867, "known antarctica": 773, "antarctica fact": 105, "fact perimeter": 560, "perimeter wall": 1032, "wall entire": 1535, "entire interior": 510, "interior used": 745, "used detention": 1508, "detention facility": 423, "facility political": 558, "political dissidents": 1069, "dissidents individuals": 446, "individuals discover": 722, "discover forbidden": 434, "forbidden knowledge": 592, "study": 1369, "links": 824, "mediterranean": 873, "diet": 430, "longevity": 830, "adults": 20, "following": 582, "lower": 832, "risk": 1242, "cardiovascular": 197, "disease": 440, "longer": 828, "lifespans": 817, "new study": 944, "study links": 1371, "links mediterranean": 825, "mediterranean diet": 874, "diet longevity": 431, "longevity year": 831, "year study": 1575, "study adults": 1370, "adults following": 21, "following mediterranean": 583, "diet lower": 432, "lower risk": 833, "risk cardiovascular": 1243, "cardiovascular disease": 198, "disease longer": 442, "longer lifespans": 829, "truth": 1473, "tap": 1408, "makes": 847, "obedient": 959, "docile": 451, "federal": 567, "regulators": 1183, "municipal": 909, "fluoridation": 580, "compounds": 303, "bind": 149, "neural": 931, "pathways": 1018, "sedatives": 1289, "reducing": 1172, "desire": 416, "question": 1133, "authority": 123, "shocking truth": 1306, "truth tap": 1474, "tap water": 1409, "water makes": 1544, "makes obedient": 848, "obedient docile": 960, "docile university": 452, "university study": 1493, "study suppressed": 1372, "suppressed federal": 1393, "federal regulators": 568, "regulators allegedly": 1184, "allegedly municipal": 62, "municipal water": 910, "water fluoridation": 1543, "fluoridation compounds": 581, "compounds bind": 304, "bind neural": 150, "neural pathways": 932, "pathways pharmaceutical": 1019, "pharmaceutical sedatives": 1042, "sedatives reducing": 1290, "reducing citizens": 1173, "citizens desire": 242, "desire question": 417, "question authority": 1134, "elections": 490, "decided": 391, "advance": 22, "computer": 307, "algorithm": 51, "whistleblower": 1552, "software": 1328, "engineer": 505, "built": 178, "voting": 1532, "platform": 1063, "includes": 706, "predetermines": 1088, "outcomes": 995, "based": 128, "instructions": 740, "received": 1158, "undisclosed": 1485, "server": 1299, "polls": 1070, "open": 982, "exposed elections": 551, "elections decided": 491, "decided advance": 392, "advance computer": 23, "computer algorithm": 308, "algorithm whistleblower": 53, "whistleblower says": 1554, "says software": 1267, "software engineer": 1329, "engineer allegedly": 506, "allegedly built": 59, "built major": 179, "major voting": 844, "voting says": 1533, "says platform": 1266, "platform includes": 1064, "includes hidden": 707, "hidden algorithm": 660, "algorithm predetermines": 52, "predetermines outcomes": 1089, "outcomes based": 996, "based instructions": 129, "instructions received": 741, "received undisclosed": 1159, "undisclosed server": 1486, "server polls": 1300, "polls open": 1071, "leaders": 804, "agree": 31, "minimum": 896, "corporate": 353, "tax": 1412, "worlds": 1570, "seven": 1301, "largest": 795, "economies": 485, "implement": 700, "rate": 1143, "leaders agree": 805, "agree global": 32, "global minimum": 626, "minimum corporate": 897, "corporate tax": 354, "tax leaders": 1413, "leaders worlds": 806, "worlds seven": 1571, "seven largest": 1302, "largest economies": 796, "economies agreed": 486, "agreed implement": 35, "implement global": 701, "tax rate": 1414, "rate starting": 1147, "unemployment": 1487, "falls": 563, "october": 965, "labor": 775, "dropped": 469, "employers": 503, "added": 12, "jobs": 761, "economy": 487, "unemployment rate": 1488, "rate falls": 1145, "falls percent": 564, "percent october": 1030, "october labor": 967, "labor department": 776, "department reported": 411, "reported unemployment": 1197, "rate dropped": 1144, "dropped october": 470, "october employers": 966, "employers added": 504, "added jobs": 13, "jobs economy": 762, "president": 1094, "working": 1564, "space": 1336, "aliens": 56, "sell": 1293, "sovereignty": 1334, "correspondence": 355, "senior": 1295, "white": 1555, "house": 684, "aide": 39, "figure": 572, "described": 412, "nonhuman": 950, "entity": 514, "suggest": 1378, "ongoing": 978, "negotiations": 925, "territorial": 1425, "rights": 1238, "portions": 1082, "pacific": 1004, "ocean": 963, "north": 952, "airspace": 47, "exclusive president": 529, "president working": 1097, "working space": 1565, "space aliens": 1337, "aliens sell": 57, "sell sovereignty": 1294, "sovereignty leaked": 1335, "leaked correspondence": 808, "correspondence senior": 356, "senior white": 1296, "white house": 1556, "house aide": 685, "aide figure": 40, "figure described": 573, "described nonhuman": 413, "nonhuman entity": 951, "entity suggest": 515, "suggest ongoing": 1379, "ongoing negotiations": 979, "negotiations territorial": 926, "territorial rights": 1426, "rights portions": 1239, "portions pacific": 1083, "pacific ocean": 1005, "ocean north": 964, "north american": 953, "american airspace": 78, "olympic": 972, "announces": 98, "games": 612, "host": 680, "international": 748, "confirmed": 318, "brisbane": 170, "australia": 121, "summer": 1381, "olympics": 974, "unanimous": 1477, "vote": 1528, "olympic committee": 973, "committee announces": 282, "announces games": 99, "games host": 613, "host city": 681, "city international": 246, "international olympic": 749, "committee confirmed": 284, "confirmed brisbane": 319, "brisbane australia": 171, "australia host": 122, "city summer": 248, "summer olympics": 1383, "olympics following": 975, "following unanimous": 584, "unanimous vote": 1478, "spraying": 1347, "mindcontrol": 892, "chemicals": 229, "planes": 1055, "pilot": 1049, "came": 182, "forward": 599, "stunning": 1373, "evidence": 524, "contrails": 343, "left": 812, "commercial": 279, "aircraft": 43, "special": 1338, "chemical": 227, "designed": 414, "make": 845, "susceptible": 1403, "suggestion": 1380, "shocking government": 1304, "government secretly": 637, "secretly spraying": 1288, "spraying mindcontrol": 1348, "mindcontrol chemicals": 893, "chemicals planes": 230, "planes whistleblower": 1056, "whistleblower pilot": 1553, "pilot came": 1050, "came forward": 183, "forward stunning": 600, "stunning evidence": 1374, "evidence contrails": 525, "contrails left": 344, "left commercial": 813, "commercial aircraft": 280, "aircraft contain": 44, "contain special": 335, "special chemical": 1339, "chemical compound": 228, "compound designed": 299, "designed make": 415, "make population": 846, "population susceptible": 1081, "susceptible government": 1404, "government suggestion": 638, "scientists": 1274, "confirm": 316, "earth": 478, "flat": 578, "nasa": 913, "caught": 205, "lying": 834, "decades": 389, "physicists": 1047, "resigned": 1223, "national": 920, "paper": 1010, "claiming": 252, "photogrammetry": 1045, "proves": 1117, "curvature": 375, "entirely": 512, "fabricated": 555, "image": 692, "manipulation": 856, "breaking scientists": 164, "scientists confirm": 1276, "confirm earth": 317, "earth actually": 479, "actually flat": 8, "flat nasa": 579, "nasa caught": 914, "caught lying": 206, "lying decades": 835, "decades physicists": 390, "physicists resigned": 1048, "resigned national": 1224, "national research": 922, "research laboratory": 1208, "laboratory published": 780, "published paper": 1124, "paper claiming": 1011, "claiming satellite": 253, "satellite photogrammetry": 1262, "photogrammetry data": 1046, "data proves": 381, "proves curvature": 1118, "curvature earth": 376, "earth entirely": 480, "entirely fabricated": 513, "fabricated image": 556, "image manipulation": 693, "manipulation software": 857, "tech": 1417, "reports": 1198, "revenue": 1232, "growth": 645, "company": 292, "posted": 1084, "revenues": 1234, "quarter": 1127, "yearoveryear": 1576, "driven": 467, "cloud": 271, "computing": 309, "advertising": 24, "tech giant": 1418, "giant reports": 622, "reports revenue": 1200, "revenue growth": 1233, "growth company": 646, "company posted": 293, "posted revenues": 1085, "revenues billion": 1235, "billion quarter": 145, "quarter yearoveryear": 1128, "yearoveryear driven": 1577, "driven cloud": 468, "cloud computing": 272, "computing advertising": 310, "species": 1340, "amazon": 74, "rainforest": 1139, "biologists": 151, "paulo": 1022, "announced": 94, "discovery": 436, "insects": 734, "previously": 1102, "unknown": 1494, "science": 1272, "recent": 1160, "expedition": 540, "scientists discover": 1277, "discover new": 435, "new species": 942, "species amazon": 1341, "amazon rainforest": 75, "rainforest biologists": 1140, "biologists university": 152, "university paulo": 1490, "paulo announced": 1023, "announced discovery": 95, "discovery new": 437, "species insects": 1342, "insects previously": 735, "previously unknown": 1103, "unknown science": 1495, "science recent": 1273, "recent expedition": 1161, "successfully": 1375, "launches": 799, "mars": 863, "exploration": 545, "rover": 1251, "nasas": 916, "newest": 946, "landed": 786, "jezero": 759, "crater": 367, "believe": 138, "ancient": 90, "lake": 782, "existed": 533, "began": 132, "transmitting": 1456, "images": 694, "nasa successfully": 915, "successfully launches": 1377, "launches mars": 800, "mars exploration": 864, "exploration rover": 546, "rover nasas": 1252, "nasas newest": 917, "newest mars": 947, "mars rover": 865, "rover successfully": 1253, "successfully landed": 1376, "landed jezero": 787, "jezero crater": 760, "crater scientists": 368, "scientists believe": 1275, "believe ancient": 139, "ancient lake": 91, "lake existed": 783, "existed began": 534, "began transmitting": 133, "transmitting images": 1457, "airline": 45, "expands": 535, "routes": 1246, "delta": 405, "air": 41, "lines": 822, "upcoming": 1500, "travel": 1458, "season": 1278, "adding": 14, "connections": 329, "unserved": 1496, "cities": 238, "major airline": 837, "airline expands": 46, "expands international": 536, "international routes": 750, "routes summer": 1247, "summer delta": 1382, "delta air": 406, "air lines": 42, "lines announced": 823, "announced new": 96, "new international": 940, "routes upcoming": 1248, "upcoming summer": 1501, "summer travel": 1384, "travel season": 1459, "season adding": 1279, "adding connections": 15, "connections previously": 330, "previously unserved": 1104, "unserved cities": 1497, "council": 357, "approves": 108, "transit": 1452, "expansion": 537, "project": 1115, "voted": 1529, "approve": 106, "funding": 610, "light": 818, "rail": 1137, "add": 10, "miles": 887, "track": 1445, "stations": 1356, "city council": 245, "council approves": 358, "approves billion": 109, "billion transit": 146, "transit expansion": 1453, "expansion project": 539, "project city": 1116, "council voted": 359, "voted approve": 1530, "approve funding": 107, "funding light": 611, "light rail": 819, "rail expansion": 1138, "expansion add": 538, "add miles": 11, "miles track": 888, "track new": 1446, "new stations": 943, "decline": 396, "malaria": 849, "cases": 203, "health": 652, "released": 1185, "showing": 1309, "deaths": 385, "declined": 398, "past": 1016, "decade": 387, "improved": 702, "prevention": 1100, "measures": 870, "reports decline": 1199, "decline global": 397, "global malaria": 625, "malaria cases": 850, "cases world": 204, "world health": 1569, "health organization": 654, "organization released": 989, "released data": 1186, "data showing": 382, "showing global": 1310, "malaria deaths": 851, "deaths declined": 386, "declined past": 399, "past decade": 1017, "decade improved": 388, "improved prevention": 703, "prevention measures": 1101, "stock": 1359, "market": 860, "closes": 269, "record": 1165, "high": 663, "strong": 1362, "earnings": 476, "indices": 718, "closed": 267, "alltime": 67, "highs": 665, "thursday": 1435, "strongerthanexpected": 1365, "quarterly": 1129, "stock market": 1361, "market closes": 861, "closes record": 270, "record high": 1166, "high strong": 664, "strong earnings": 1363, "earnings major": 477, "major stock": 842, "stock indices": 1360, "indices closed": 719, "closed alltime": 268, "alltime highs": 68, "highs thursday": 666, "thursday technology": 1436, "technology companies": 1423, "companies reported": 290, "reported strongerthanexpected": 1196, "strongerthanexpected quarterly": 1366, "quarterly earnings": 1130, "census": 216, "shows": 1312, "slowing": 1322, "bureau": 180, "indicating": 716, "grew": 641, "just": 767, "slowest": 1320, "pace": 1003, "new census": 937, "census data": 218, "data shows": 383, "shows population": 1313, "population growth": 1078, "growth slowing": 647, "slowing census": 1323, "census bureau": 217, "bureau released": 181, "data indicating": 379, "indicating national": 717, "national population": 921, "population grew": 1077, "grew just": 642, "just year": 768, "year slowest": 1574, "slowest pace": 1321, "children": 231, "targeted": 1410, "invisible": 755, "rays": 1152, "smart": 1324, "devices": 428, "school": 1268, "parents": 1012, "schools": 1270, "metropolitan": 879, "area": 112, "report": 1191, "experiencing": 541, "headaches": 650, "confusion": 325, "behavioral": 136, "changes": 222, "attributed": 119, "microwaveband": 885, "transmissions": 1454, "campus": 184, "wireless": 1559, "networks": 930, "urgent children": 1503, "children targeted": 233, "targeted invisible": 1411, "invisible rays": 756, "rays smart": 1153, "smart devices": 1325, "devices school": 429, "school parents": 1269, "parents schools": 1013, "schools major": 1271, "major metropolitan": 840, "metropolitan area": 880, "area report": 113, "report children": 1192, "children experiencing": 232, "experiencing headaches": 542, "headaches confusion": 651, "confusion behavioral": 326, "behavioral changes": 137, "changes attributed": 223, "attributed researcher": 120, "researcher microwaveband": 1211, "microwaveband transmissions": 886, "transmissions campus": 1455, "campus wireless": 185, "wireless networks": 1560, "warning": 1538, "common": 285, "food": 585, "additive": 16, "turns": 1475, "people": 1026, "mindless": 894, "zombies": 1580, "analysis": 86, "independent": 712, "group": 643, "widely": 1557, "preservative": 1092, "packaged": 1006, "foods": 587, "bonds": 158, "brain": 160, "receptors": 1162, "way": 1546, "suppresses": 1395, "critical": 369, "thinking": 1431, "increases": 710, "compliance": 296, "warning common": 1539, "common food": 286, "food additive": 586, "additive turns": 17, "turns people": 1476, "people mindless": 1027, "mindless zombies": 895, "zombies laboratory": 1581, "laboratory analysis": 779, "analysis conducted": 87, "conducted independent": 314, "independent research": 713, "research group": 1207, "group widely": 644, "widely used": 1558, "used preservative": 1511, "preservative packaged": 1093, "packaged foods": 1007, "foods bonds": 588, "bonds brain": 159, "brain receptors": 161, "receptors way": 1163, "way suppresses": 1547, "suppresses critical": 1396, "critical thinking": 370, "thinking increases": 1432, "increases compliance": 711, "compliance authority": 297, "revealed": 1225, "herb": 655, "cures": 373, "doctors": 455, "refuse": 1179, "prescribe": 1090, "herbalist": 657, "combination": 275, "garden": 614, "plants": 1059, "eliminates": 495, "virtually": 1526, "diseases": 443, "weeks": 1550, "consumption": 331, "medical": 871, "boards": 153, "threatened": 1433, "revoke": 1236, "licenses": 815, "recommend": 1164, "revealed common": 1226, "common herb": 288, "herb cures": 656, "cures disease": 374, "disease doctors": 441, "doctors refuse": 457, "refuse prescribe": 1180, "prescribe herbalist": 1091, "herbalist claims": 658, "claims combination": 255, "combination common": 276, "common garden": 287, "garden plants": 615, "plants eliminates": 1060, "eliminates virtually": 496, "virtually known": 1527, "known diseases": 774, "diseases weeks": 444, "weeks consumption": 1551, "consumption medical": 332, "medical boards": 872, "boards threatened": 154, "threatened revoke": 1434, "revoke licenses": 1237, "licenses doctors": 816, "doctors recommend": 456, "towers": 1440, "cause": 207, "immediate": 695, "mutation": 911, "humans": 690, "internal": 746, "european": 520, "agency": 29, "confirms": 321, "radiation": 1135, "emitted": 501, "fifth": 570, "generation": 616, "triggers": 1469, "human": 688, "affecting": 25, "reproduction": 1201, "cognitive": 273, "function": 609, "alert towers": 50, "towers confirmed": 1441, "confirmed cause": 320, "cause immediate": 208, "immediate dna": 697, "dna mutation": 450, "mutation humans": 912, "humans leaked": 691, "leaked internal": 810, "internal research": 747, "research document": 1206, "document major": 461, "major european": 839, "european health": 521, "health agency": 653, "agency confirms": 30, "confirms radiation": 322, "radiation emitted": 1136, "emitted fifth": 502, "fifth generation": 571, "generation wireless": 617, "wireless towers": 1561, "towers triggers": 1442, "triggers immediate": 1470, "immediate changes": 696, "changes human": 224, "human dna": 689, "dna affecting": 448, "affecting reproduction": 26, "reproduction cognitive": 1202, "cognitive function": 274, "reserve": 1219, "raises": 1141, "rates": 1149, "quarterpoint": 1131, "hike": 667, "citing": 239, "persistent": 1033, "inflation": 725, "conditions": 311, "latest": 797, "federal reserve": 569, "reserve raises": 1222, "raises rates": 1142, "rates federal": 1150, "reserve announced": 1220, "announced quarterpoint": 97, "quarterpoint rate": 1132, "rate hike": 1146, "hike citing": 668, "citing persistent": 240, "persistent inflation": 1034, "inflation strong": 726, "strong labor": 1364, "labor market": 777, "market conditions": 862, "conditions latest": 312, "latest policy": 798, "policy meeting": 1067, "central": 219, "bank": 126, "holds": 674, "steady": 1357, "amid": 80, "economic": 481, "uncertainty": 1481, "officials": 970, "unanimously": 1479, "benchmark": 140, "unchanged": 1483, "monitoring": 901, "incoming": 708, "months": 903, "central bank": 220, "bank holds": 127, "holds rate": 675, "rate steady": 1148, "steady amid": 1358, "amid economic": 81, "economic uncertainty": 484, "uncertainty federal": 1482, "reserve officials": 1221, "officials voted": 971, "voted unanimously": 1531, "unanimously benchmark": 1480, "benchmark rates": 141, "rates unchanged": 1151, "unchanged monitoring": 1484, "monitoring incoming": 902, "incoming economic": 709, "economic data": 482, "data months": 380, "admits": 18, "time": 1437, "manipulate": 854, "historical": 669, "events": 522, "declassified": 394, "index": 714, "freedom": 605, "information": 727, "request": 1203, "references": 1177, "operations": 983, "operatives": 985, "sent": 1297, "prevent": 1098, "specific": 1343, "exclusive government": 528, "government admits": 630, "admits time": 19, "time travel": 1439, "travel used": 1460, "used manipulate": 1510, "manipulate historical": 855, "historical events": 670, "events declassified": 523, "declassified document": 395, "document index": 460, "index released": 715, "released freedom": 1187, "freedom information": 606, "information request": 728, "request allegedly": 1204, "allegedly contains": 60, "contains references": 338, "references classified": 1178, "classified operations": 261, "operations government": 984, "government operatives": 633, "operatives sent": 986, "sent time": 1298, "time prevent": 1438, "prevent cause": 1099, "cause specific": 209, "specific historical": 1344, "elite": 497, "planning": 1057, "microchip": 881, "explosive": 547, "insider": 738, "forum": 597, "details": 420, "inject": 732, "microscopic": 883, "tracking": 1447, "chips": 234, "guise": 648, "routine": 1249, "immunizations": 698, "revealed global": 1227, "global elite": 624, "elite planning": 498, "planning microchip": 1058, "microchip entire": 882, "entire population": 511, "population explosive": 1076, "explosive document": 548, "allegedly insider": 61, "insider world": 739, "world economic": 1567, "economic forum": 483, "forum details": 598, "details plan": 421, "plan inject": 1052, "inject microscopic": 733, "microscopic tracking": 884, "tracking chips": 1448, "chips global": 235, "population guise": 1079, "guise routine": 649, "routine immunizations": 1250, "immunizations months": 699, "signs": 1316, "infrastructure": 729, "signed": 1314, "comprehensive": 305, "allocates": 65, "trillion": 1471, "roads": 1244, "bridges": 168, "broadband": 172, "internet": 751, "country": 362, "president signs": 1096, "signs infrastructure": 1317, "infrastructure law": 731, "law president": 803, "president signed": 1095, "signed comprehensive": 1315, "comprehensive infrastructure": 306, "infrastructure allocates": 730, "allocates trillion": 66, "trillion roads": 1472, "roads bridges": 1245, "bridges broadband": 169, "broadband internet": 173, "internet access": 752, "access country": 2, "moon": 904, "landing": 788, "staged": 1352, "hollywood": 676, "studio": 1367, "film": 574, "industry": 723, "technician": 1419, "worked": 1562, "original": 991, "broadcasts": 174, "neverbeforeseen": 933, "footage": 589, "purportedly": 1125, "sound": 1330, "stage": 1350, "equipment": 518, "lighting": 820, "rigs": 1240, "fake": 561, "missions": 898, "bombshell moon": 157, "moon landing": 905, "landing staged": 789, "staged hollywood": 1353, "hollywood studio": 677, "studio new": 1368, "new evidence": 939, "evidence proves": 526, "proves film": 1119, "film industry": 575, "industry technician": 724, "technician claims": 1420, "claims worked": 258, "worked original": 1563, "original broadcasts": 992, "broadcasts released": 175, "released neverbeforeseen": 1188, "neverbeforeseen footage": 934, "footage purportedly": 590, "purportedly showing": 1126, "showing sound": 1311, "sound stage": 1331, "stage equipment": 1351, "equipment lighting": 519, "lighting rigs": 821, "rigs used": 1241, "used fake": 1509, "fake moon": 562, "moon missions": 906};
+const MODEL_IDF = [4.063390922027805, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 3.775708849576025, 4.468856030135971, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 3.9988524008902346, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 3.8810693652338513, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 2.9212935214199574, 4.574216545793796, 4.468856030135971, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.825530974074702, 4.373545850331645, 4.373545850331645, 4.69199958145018, 3.8810693652338513, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 3.552565298261815, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 3.9988524008902346, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 3.4756042571256867, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.825530974074702, 4.825530974074702, 3.775708849576025, 4.373545850331645, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 3.552565298261815, 4.69199958145018, 4.468856030135971, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.468856030135971, 4.468856030135971, 3.8810693652338513, 4.574216545793796, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.063390922027805, 4.825530974074702, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 3.439236612954812, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 3.3374539186448695, 4.825530974074702, 4.574216545793796, 4.69199958145018, 4.468856030135971, 3.59338729278207, 4.69199958145018, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 3.8270021439635755, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.063390922027805, 4.574216545793796, 4.825530974074702, 4.825530974074702, 3.9382277790737996, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 3.3057052203302892, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 3.8810693652338513, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.8810693652338513, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.825530974074702, 4.825530974074702, 3.9988524008902346, 4.69199958145018, 4.574216545793796, 3.8270021439635755, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.063390922027805, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 2.85941811770187, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.373545850331645, 3.8810693652338513, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.69199958145018, 3.7269186854065928, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.574216545793796, 4.132383793514757, 4.825530974074702, 4.69199958145018, 4.825530974074702, 4.825530974074702, 4.373545850331645, 4.373545850331645, 3.9988524008902346, 4.574216545793796, 4.69199958145018, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.825530974074702, 3.2749335616635356, 3.9988524008902346, 4.468856030135971, 4.574216545793796, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.9988524008902346, 4.825530974074702, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.8810693652338513, 4.468856030135971, 4.574216545793796, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 3.8270021439635755, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 3.8810693652338513, 4.574216545793796, 4.468856030135971, 3.5133445851085336, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 3.552565298261815, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 3.59338729278207, 4.69199958145018, 3.9382277790737996, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 3.775708849576025, 4.373545850331645, 4.468856030135971, 3.033771504846648, 4.574216545793796, 4.373545850331645, 4.69199958145018, 4.574216545793796, 3.9382277790737996, 2.8201974045485887, 4.468856030135971, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.373545850331645, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.468856030135971, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 3.8270021439635755, 4.574216545793796, 4.373545850331645, 4.825530974074702, 4.825530974074702, 4.825530974074702, 4.825530974074702, 3.552565298261815, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 3.8270021439635755, 4.574216545793796, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.373545850331645, 3.9382277790737996, 4.373545850331645, 4.825530974074702, 3.9382277790737996, 4.468856030135971, 4.69199958145018, 3.4756042571256867, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.063390922027805, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 3.9382277790737996, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 3.59338729278207, 4.574216545793796, 4.69199958145018, 4.574216545793796, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 2.628306396738483, 4.69199958145018, 4.468856030135971, 4.574216545793796, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 3.9988524008902346, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 3.9988524008902346, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.8810693652338513, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 2.352600515333418, 4.468856030135971, 4.69199958145018, 4.825530974074702, 4.468856030135971, 4.69199958145018, 4.468856030135971, 4.373545850331645, 4.468856030135971, 4.69199958145018, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.8270021439635755, 4.574216545793796, 4.373545850331645, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.825530974074702, 4.825530974074702, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 3.9988524008902346, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 3.9988524008902346, 4.574216545793796, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 3.3057052203302892, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 3.9988524008902346, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.373545850331645, 3.8810693652338513, 4.373545850331645, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 3.8810693652338513, 4.574216545793796, 4.468856030135971, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.8270021439635755, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 3.8270021439635755, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 3.2749335616635356, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.574216545793796, 4.574216545793796, 3.9988524008902346, 4.69199958145018, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 3.9988524008902346, 4.69199958145018, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 3.187922184673906, 3.8810693652338513, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 3.2749335616635356, 4.468856030135971, 4.825530974074702, 4.574216545793796, 4.468856030135971, 3.775708849576025, 4.373545850331645, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 3.0102410074364534, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 3.9988524008902346, 4.825530974074702, 4.468856030135971, 3.9988524008902346, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.063390922027805, 4.825530974074702, 4.574216545793796, 3.9988524008902346, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 3.439236612954812, 4.468856030135971, 4.373545850331645, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.825530974074702, 4.825530974074702, 4.373545850331645, 4.373545850331645, 3.4756042571256867, 4.69199958145018, 4.468856030135971, 4.373545850331645, 4.69199958145018, 4.69199958145018, 3.552565298261815, 4.468856030135971, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 3.552565298261815, 4.574216545793796, 4.468856030135971, 4.69199958145018, 4.468856030135971, 4.468856030135971, 3.775708849576025, 4.373545850331645, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 3.8810693652338513, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.373545850331645, 4.373545850331645, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.9382277790737996, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 3.9988524008902346, 4.574216545793796, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.063390922027805, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.9988524008902346, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 3.9382277790737996, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.825530974074702, 4.825530974074702, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.825530974074702, 4.825530974074702, 4.69199958145018, 4.69199958145018, 3.9382277790737996, 4.69199958145018, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.063390922027805, 4.825530974074702, 4.574216545793796, 3.9988524008902346, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.468856030135971, 4.468856030135971, 3.2749335616635356, 4.373545850331645, 4.468856030135971, 4.825530974074702, 4.69199958145018, 4.373545850331645, 4.373545850331645, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.132383793514757, 4.825530974074702, 4.69199958145018, 4.468856030135971, 4.468856030135971, 3.1605232104857914, 4.373545850331645, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.825530974074702, 4.825530974074702, 4.468856030135971, 3.8270021439635755, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.373545850331645, 4.373545850331645, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 3.9382277790737996, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.69199958145018, 4.69199958145018, 4.825530974074702, 4.825530974074702, 3.9382277790737996, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.063390922027805, 4.825530974074702, 4.574216545793796, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 3.4756042571256867, 4.574216545793796, 4.574216545793796, 4.373545850331645, 4.69199958145018, 4.69199958145018, 3.59338729278207, 4.468856030135971, 4.69199958145018, 4.69199958145018, 4.468856030135971, 4.468856030135971, 4.574216545793796, 4.574216545793796, 4.574216545793796, 4.574216545793796];
+const MODEL_COEF = [0.3920606917642031, 0.21051083551604363, 0.24220184632031153, -0.16699032449628812, -0.16699032449628812, 0.2160836484044734, 0.2160836484044734, -0.3549006160052591, -0.2116262257772179, -0.20398202163082266, 0.22345051601485302, 0.22345051601485302, 0.2381673904465909, 0.2381673904465909, 0.19014165274118816, 0.19014165274118816, -0.1894028452989547, -0.1894028452989547, -0.1769562845813354, -0.1769562845813354, 0.21123725146878963, 0.21123725146878963, -0.18612736436220223, -0.18612736436220223, 0.28716581143826975, -0.1737159233734694, -0.1737159233734694, -0.20745893444915375, -0.20745893444915375, -0.1737159233734694, -0.1737159233734694, 0.19571279360053173, 0.19571279360053173, -0.014394383790857465, -0.20726530599824944, 0.19571279360053173, 0.4571123252537984, 0.2285561626268992, 0.2285561626268992, -0.20232004620501623, -0.20232004620501623, 0.19014165274118816, 0.19014165274118816, -0.18947414712380628, -0.18947414712380628, 0.19014165274118816, 0.19014165274118816, -0.20232004620501623, -0.3275640884691071, -0.20745893444915375, -0.1737159233734694, -0.37225472872440446, -0.18612736436220223, -0.18612736436220223, -0.16279365076508157, -0.16279365076508157, -0.20232004620501623, -0.20232004620501623, -0.6924578948272633, -0.18612736436220223, -0.1769562845813354, -0.20823051758599323, -0.19209415276621586, -0.16279365076508157, -0.16699032449628812, 0.24220184632031153, 0.24220184632031153, 0.23000613813916862, 0.23000613813916862, -0.18891163990135018, -0.18891163990135018, 0.3891818186941766, 0.1945909093470883, 0.1945909093470883, 0.24538304744951112, 0.24538304744951112, 0.21051083551604363, -0.3357259505261002, -0.20232004620501623, -0.18891163990135018, 0.22755336580436908, 0.22755336580436908, -0.18891163990135018, -0.18891163990135018, 0.1945909093470883, 0.1945909093470883, -0.1894028452989547, -0.1894028452989547, -0.20050179494313866, -0.20050179494313866, 0.19895040856016583, 0.19895040856016583, -0.20745893444915375, -0.20745893444915375, 0.4923887205583024, 0.24538304744951112, 0.19014165274118816, 0.19692339941652434, 0.22381078454703096, 0.22381078454703096, -0.16699032449628812, -0.16699032449628812, -0.20398202163082266, -0.20398202163082266, -0.20398202163082266, -0.20398202163082266, 0.22345051601485302, 0.22345051601485302, 0.22345051601485302, 0.22345051601485302, -0.20050179494313866, -0.20050179494313866, -0.17333727854452893, -0.17333727854452893, -0.33398064899257623, -0.16699032449628812, -0.16699032449628812, -0.20726530599824944, -0.20726530599824944, -0.17333727854452893, -0.17333727854452893, 0.22381078454703096, 0.22381078454703096, -0.3292951230028352, -0.20745893444915375, -0.20745893444915375, 0.22755336580436908, 0.22755336580436908, -0.18612736436220223, -0.18612736436220223, 0.2160836484044734, 0.2160836484044734, 0.19895040856016583, 0.19895040856016583, -0.18891163990135018, -0.18891163990135018, -0.17333727854452893, -0.17333727854452893, 0.19895040856016583, 0.19895040856016583, 0.22755336580436908, 0.22755336580436908, -0.17053329460747157, -0.17053329460747157, 0.23964093585025523, 0.28716581143826975, 0.22345051601485302, -0.20726530599824944, -0.20726530599824944, -0.19209415276621586, -0.19209415276621586, 0.24538304744951112, 0.24538304744951112, -0.17112846910061202, -0.17112846910061202, -0.35071901822683105, -0.20398202163082266, -0.2066769674545513, -0.1894028452989547, -0.1894028452989547, -0.1894028452989547, -0.1894028452989547, -0.4556445095535981, -0.16699032449628812, -0.2116262257772179, -0.20726530599824944, 0.1945909093470883, 0.1945909093470883, 0.24220184632031153, 0.24220184632031153, 0.22381078454703096, 0.22381078454703096, 0.24220184632031153, 0.24220184632031153, -0.2066769674545513, -0.2066769674545513, 0.1945909093470883, 0.1945909093470883, -0.18612736436220223, -0.18612736436220223, 0.22886064691469296, 0.22886064691469296, -0.18947414712380628, -0.18947414712380628, -0.17333727854452893, -0.17333727854452893, -0.5115998838224151, -0.17053329460747157, -0.17053329460747157, -0.17053329460747157, 0.22936035454574727, 0.22936035454574727, 0.2160836484044734, 0.2160836484044734, 0.4571123252537984, 0.2285561626268992, 0.2285561626268992, 0.21123725146878963, 0.21123725146878963, 0.2160836484044734, 0.2160836484044734, 0.21051083551604363, 0.21051083551604363, 0.26185016328439015, 0.26185016328439015, -0.2116262257772179, -0.2116262257772179, -0.30107343870054787, -0.1737159233734694, -0.1769562845813354, -0.33398064899257623, -0.33398064899257623, 0.21051083551604363, 0.21051083551604363, -0.17053329460747157, -0.17053329460747157, 0.4577212938293859, 0.22886064691469296, 0.22886064691469296, 0.22755336580436908, 0.22755336580436908, -0.20050179494313866, -0.30027674156208994, -0.17333727854452893, -0.1737159233734694, -0.16699032449628812, -0.16699032449628812, -0.18947414712380628, -0.18947414712380628, -0.18947414712380628, -0.18947414712380628, -0.34667455708905787, -0.17333727854452893, -0.17333727854452893, -0.20823051758599323, -0.20823051758599323, -0.20745893444915375, -0.20745893444915375, 0.19014165274118816, 0.19692339941652434, 0.19692339941652434, -0.3440595753792714, -0.19209415276621586, -0.20745893444915375, 0.3976523772063089, 0.44690103202970605, 0.22381078454703096, -0.18891163990135018, 0.22381078454703096, -0.18891163990135018, -0.20726530599824944, -0.20726530599824944, -0.2116262257772179, -0.2116262257772179, -0.5347951976494747, -0.17112846910061202, -0.20050179494313866, -0.16279365076508157, -0.2066769674545513, -0.39485618472028083, -0.16279365076508157, -0.1769562845813354, -0.16699032449628812, 0.2285561626268992, 0.2285561626268992, 0.22936035454574727, 0.22936035454574727, 0.23000613813916862, 0.23000613813916862, 0.23000613813916862, 0.23000613813916862, 0.28716581143826975, 0.28716581143826975, -0.1737159233734694, -0.1737159233734694, -0.17112846910061202, -0.17112846910061202, 0.2160836484044734, 0.2160836484044734, -0.18947414712380628, -0.18947414712380628, 0.20566850028015737, 0.22381078454703096, -0.20745893444915375, 0.22381078454703096, -0.4564524659961148, -0.1894028452989547, -0.17112846910061202, -0.17112846910061202, 0.05120387330862429, 0.23000613813916862, -0.17053329460747157, 0.28716581143826975, 0.28716581143826975, 0.2285561626268992, 0.2285561626268992, -0.1894028452989547, -0.1894028452989547, -0.2666093402899435, -0.18947414712380628, -0.17053329460747157, 0.1945909093470883, -0.18891163990135018, -0.19209415276621586, -0.19209415276621586, 0.24220184632031153, 0.24220184632031153, -0.18612736436220223, -0.18612736436220223, 0.28716581143826975, 0.28716581143826975, 0.19692339941652434, 0.19692339941652434, -0.3247661386721589, -0.1894028452989547, -0.18891163990135018, -0.2116262257772179, -0.2116262257772179, 0.04698091438214334, 0.22381078454703096, -0.1737159233734694, -0.1737159233734694, -0.1737159233734694, -0.20745893444915375, -0.20745893444915375, -0.17333727854452893, -0.17333727854452893, -0.20745893444915375, -0.20745893444915375, 0.19014165274118816, 0.19014165274118816, -0.17112846910061202, -0.17112846910061202, -0.3043855053695188, -0.16279365076508157, -0.18947414712380628, -0.31331896171202894, -0.18891163990135018, -0.1769562845813354, -0.20398202163082266, -0.20398202163082266, -0.20398202163082266, -0.20398202163082266, -0.18947414712380628, -0.18947414712380628, -0.20745893444915375, -0.20745893444915375, -0.20050179494313866, -0.20050179494313866, -0.20050179494313866, -0.20050179494313866, -0.20726530599824944, -0.20726530599824944, 0.39142558720106346, 0.39142558720106346, -0.20232004620501623, -0.20232004620501623, 0.44690103202970605, 0.22345051601485302, 0.22345051601485302, 0.2285561626268992, 0.2285561626268992, 0.24220184632031153, 0.21999760432737092, -0.16699032449628812, 0.21051083551604363, 0.21051083551604363, 0.19895040856016583, 0.19895040856016583, -0.1894028452989547, -0.1894028452989547, -0.17053329460747157, -0.17053329460747157, -0.17112846910061202, -0.17112846910061202, -0.2116262257772179, -0.2116262257772179, 0.4868572106558491, -0.16699032449628812, 0.22886064691469296, 0.22755336580436908, -0.2116262257772179, 0.26185016328439015, 0.22886064691469296, 0.21051083551604363, 0.26185016328439015, 0.26185016328439015, 0.26185016328439015, 0.26185016328439015, -0.2116262257772179, -0.2116262257772179, -0.18612736436220223, -0.18612736436220223, -0.18891163990135018, -0.1769562845813354, -0.1769562845813354, 0.26185016328439015, 0.26185016328439015, 0.26185016328439015, 0.26185016328439015, -0.3156705462554611, -0.20398202163082266, -0.16279365076508157, 0.2285561626268992, 0.2285561626268992, 0.19014165274118816, 0.19014165274118816, -0.16699032449628812, -0.16699032449628812, 0.07324681347776883, -0.16279365076508157, 0.2381673904465909, -0.20232004620501623, -0.20232004620501623, -0.18947414712380628, -0.18947414712380628, -0.19209415276621586, -0.19209415276621586, -0.17053329460747157, -0.17053329460747157, -0.20823051758599323, -0.20823051758599323, -0.20398202163082266, -0.20398202163082266, 0.21051083551604363, 0.21051083551604363, 0.22936035454574727, 0.22936035454574727, -0.17333727854452893, -0.17333727854452893, 0.42247450293757927, 0.21123725146878963, 0.21123725146878963, 0.03527989919368733, -0.20398202163082266, 0.24538304744951112, 0.24538304744951112, 0.24538304744951112, -0.20726530599824944, -0.20726530599824944, 0.03949564432752895, -0.17112846910061202, 0.21123725146878963, -0.17112846910061202, -0.17112846910061202, -0.20398202163082266, -0.20398202163082266, -0.44247462293827317, -0.1737159233734694, -0.16279365076508157, -0.1737159233734694, -0.19209415276621586, -0.19209415276621586, -0.17053329460747157, -0.17053329460747157, -0.34225693820122405, -0.17112846910061202, -0.17112846910061202, -0.6303904670704576, -0.32078262087636406, -0.1769562845813354, -0.1737159233734694, -0.16279365076508157, -0.17053329460747157, -0.17053329460747157, -0.20745893444915375, -0.20745893444915375, 0.28716581143826975, 0.28716581143826975, 0.2381673904465909, 0.2381673904465909, -0.007788348496207545, 0.1945909093470883, -0.18891163990135018, 0.22936035454574727, 0.22936035454574727, 0.46001227627833724, 0.23000613813916862, -0.4232524515544358, -0.2116262257772179, -0.2116262257772179, 0.2185701315115588, 0.22755336580436908, -0.20823051758599323, 0.22755336580436908, 0.19571279360053173, 0.19571279360053173, 0.2381673904465909, 0.22936035454574727, 0.22936035454574727, -0.18612736436220223, -0.18612736436220223, 0.4321672968089468, 0.2160836484044734, 0.2160836484044734, -0.17112846910061202, -0.17112846910061202, -0.20823051758599323, -0.20823051758599323, 0.2285561626268992, 0.2285561626268992, -0.1737159233734694, -0.1737159233734694, 0.2381673904465909, 0.2381673904465909, -0.18612736436220223, -0.18612736436220223, 0.2160836484044734, -0.5311978138279568, -0.20398202163082266, -0.20398202163082266, -0.20823051758599323, -0.2116262257772179, -0.2116262257772179, -0.20232004620501623, -0.20232004620501623, -0.18891163990135018, -0.18891163990135018, -0.2066769674545513, -0.2066769674545513, -0.1737159233734694, -0.1737159233734694, -0.3539125691626708, -0.1769562845813354, -0.34025529772638163, -0.18947414712380628, -0.2066769674545513, -0.42549984961630893, -0.1769562845813354, -0.20232004620501623, -0.17053329460747157, -0.20726530599824944, -0.20726530599824944, 0.19895040856016583, 0.19895040856016583, 0.19014165274118816, 0.19014165274118816, 0.44690103202970605, 0.22345051601485302, 0.22345051601485302, 0.24538304744951112, -0.17333727854452893, -0.17333727854452893, -0.18891163990135018, -0.18891163990135018, 0.19895040856016583, 0.19895040856016583, -0.20823051758599323, -0.20823051758599323, -0.4327202220203514, -0.17053329460747157, -0.18612736436220223, -0.20050179494313866, -0.16279365076508157, -0.16279365076508157, -0.2116262257772179, -0.2116262257772179, -0.20398202163082266, -0.20398202163082266, -0.20398202163082266, -0.20398202163082266, -0.2066769674545513, -0.2066769674545513, 0.2381673904465909, 0.2381673904465909, -0.16699032449628812, -0.16699032449628812, 0.3374877498900965, -0.19209415276621586, 0.5311090051395171, -0.1737159233734694, -0.1737159233734694, -0.20232004620501623, -0.20232004620501623, -0.2066769674545513, -0.2066769674545513, 0.22936035454574727, 0.22936035454574727, -0.2116262257772179, -0.2116262257772179, -0.19209415276621586, -0.19209415276621586, 0.3745375718382315, 0.21123725146878963, 0.22381078454703096, -0.1894028452989547, -0.1894028452989547, -0.1894028452989547, -0.1894028452989547, -0.2066769674545513, -0.2066769674545513, -0.20398202163082266, -0.20398202163082266, -0.20745893444915375, -0.20745893444915375, -0.16699032449628812, -0.16699032449628812, -0.20823051758599323, -0.20823051758599323, -0.18947414712380628, -0.18947414712380628, -0.20050179494313866, -0.20050179494313866, 0.21051083551604363, 0.21051083551604363, -0.1769562845813354, -0.1769562845813354, -0.17053329460747157, -0.17053329460747157, -0.1737159233734694, 0.22345051601485302, 0.22345051601485302, 0.22381078454703096, 0.22381078454703096, -0.17112846910061202, -0.17112846910061202, -0.1737159233734694, -0.1737159233734694, -0.16279365076508157, -0.16279365076508157, 0.06652569451190189, -0.20398202163082266, 0.28716581143826975, 0.06970625419750487, -0.20823051758599323, 0.5237003265687803, 0.39142558720106346, -0.20050179494313866, -0.3577262200306807, -1.0718310035237613, -0.1769562845813354, -0.16279365076508157, -0.20745893444915375, -0.1769562845813354, -0.20050179494313866, -0.20398202163082266, -0.20745893444915375, -0.18947414712380628, -0.18947414712380628, -0.20050179494313866, -0.20050179494313866, 0.22886064691469296, 0.22886064691469296, -0.1894028452989547, -0.1894028452989547, 0.4451620646831382, 0.28716581143826975, 0.22886064691469296, -0.20823051758599323, -0.20823051758599323, -0.17333727854452893, -0.17333727854452893, 0.08378903038185993, -0.1737159233734694, 0.26185016328439015, -0.17112846910061202, -0.17112846910061202, -0.17112846910061202, -0.17112846910061202, -0.4327202220203514, -0.18612736436220223, -0.17053329460747157, -0.20050179494313866, 0.23000613813916862, 0.23000613813916862, 0.23000613813916862, 0.23000613813916862, 0.19692339941652434, 0.19692339941652434, -0.3539125691626708, -0.3539125691626708, 0.45872070909149454, 0.22936035454574727, 0.22936035454574727, 0.22755336580436908, 0.22755336580436908, -0.2066769674545513, -0.2066769674545513, 0.1945909093470883, 0.1945909093470883, 0.4476215690940619, 0.4476215690940619, -0.17053329460747157, -0.17053329460747157, -0.20232004620501623, -0.20232004620501623, -0.20745893444915375, -0.20745893444915375, -0.1737159233734694, -0.1737159233734694, -0.1737159233734694, -0.1737159233734694, -0.2116262257772179, -0.2116262257772179, 0.19895040856016583, -0.3474318467469388, -0.1737159233734694, -0.1737159233734694, -0.20823051758599323, -0.20823051758599323, 0.19571279360053173, 0.19571279360053173, 0.26185016328439015, 0.26185016328439015, -0.16279365076508157, -0.16279365076508157, -0.18612736436220223, -0.18612736436220223, 0.22755336580436908, 0.22755336580436908, -0.1894028452989547, -0.1894028452989547, -0.1894028452989547, -0.1894028452989547, -0.1769562845813354, -0.1769562845813354, 0.22886064691469296, 0.22886064691469296, 0.23000613813916862, 0.23000613813916862, -0.3462403625169079, -0.20050179494313866, -0.20398202163082266, -0.2066769674545513, -0.2066769674545513, 0.19692339941652434, 0.19692339941652434, -0.1769562845813354, -0.1769562845813354, 0.48440369264062305, 0.24220184632031153, 0.24220184632031153, -0.20823051758599323, -0.20823051758599323, 0.24538304744951112, 0.24538304744951112, -0.16699032449628812, -0.16699032449628812, -0.20823051758599323, -0.20823051758599323, -0.18612736436220223, -0.18612736436220223, -0.20050179494313866, -0.20050179494313866, -0.20398202163082266, -0.20398202163082266, -0.1737159233734694, -0.1737159233734694, 0.516426302709208, 0.22381078454703096, 0.3802833054823763, 0.24220184632031153, 0.24220184632031153, -0.20726530599824944, -0.20726530599824944, -0.17333727854452893, -0.17333727854452893, -0.20726530599824944, -0.20726530599824944, 0.19895040856016583, 0.19895040856016583, 0.2381673904465909, 0.2381673904465909, 0.1945909093470883, 0.1945909093470883, -0.20726530599824944, -0.20726530599824944, 0.22886064691469296, 0.22886064691469296, -0.17053329460747157, -0.17053329460747157, -0.20398202163082266, -0.3233407161685874, -0.20398202163082266, -0.17112846910061202, 0.3751751608783957, 0.2381673904465909, 0.19692339941652434, -0.45542700019520793, -0.1894028452989547, -0.2116262257772179, -0.18891163990135018, 0.19895040856016583, 0.19895040856016583, -0.20398202163082266, -0.20398202163082266, 0.19895040856016583, 0.19895040856016583, -0.2066769674545513, -0.2066769674545513, 0.3802431827721123, 0.2285561626268992, 0.21051083551604363, -0.18891163990135018, -0.18891163990135018, 0.19571279360053173, 0.19571279360053173, 0.19692339941652434, 0.19692339941652434, 0.19895040856016583, 0.19895040856016583, 0.02046657988831773, -0.20745893444915375, 0.24220184632031153, 0.39142558720106346, 0.19571279360053173, 0.19571279360053173, -0.5447566028574767, -0.20232004620501623, -0.16279365076508157, -0.1737159233734694, -0.16279365076508157, -0.18947414712380628, -0.18947414712380628, 0.2285561626268992, -0.17112846910061202, -0.17112846910061202, 0.21123725146878963, 0.22345051601485302, 0.22345051601485302, -0.2066769674545513, -0.2066769674545513, 0.19014165274118816, 0.19014165274118816, 0.21123725146878963, 0.21123725146878963, 0.21051083551604363, 0.21051083551604363, 0.21123725146878963, 0.21123725146878963, 0.21123725146878963, 0.21123725146878963, 0.21123725146878963, 0.21123725146878963, -0.2116262257772179, -0.2116262257772179, -0.4079089521438085, 0.19014165274118816, -0.18891163990135018, -0.1737159233734694, -0.17333727854452893, -0.20050179494313866, 0.23000613813916862, -0.20726530599824944, -0.18612736436220223, -0.18947414712380628, -0.18947414712380628, -0.19209415276621586, -0.19209415276621586, 0.5237003265687803, 0.26185016328439015, 0.26185016328439015, -0.20726530599824944, -0.20726530599824944, -0.1769562845813354, -0.1769562845813354, -0.2116262257772179, -0.2116262257772179, -0.20050179494313866, -0.20050179494313866, 0.3689069873646038, 0.23000613813916862, 0.19692339941652434, 0.39790081712033165, 0.19895040856016583, 0.19895040856016583, -0.20398202163082266, -0.20398202163082266, -0.16279365076508157, -0.16279365076508157, 0.26185016328439015, -0.17112846910061202, -0.17112846910061202, 0.42247450293757927, 0.42247450293757927, -0.013362620277290207, -0.20726530599824944, -0.20726530599824944, -0.20726530599824944, -0.17333727854452893, -0.17333727854452893, -0.20823051758599323, -0.20823051758599323, -0.20823051758599323, -0.20823051758599323, -0.17333727854452893, -0.17333727854452893, 0.22345051601485302, 0.22345051601485302, -0.33398064899257623, -0.16699032449628812, -0.16699032449628812, -0.18947414712380628, -0.18947414712380628, -0.1894028452989547, -0.1894028452989547, 0.39142558720106346, 0.39142558720106346, -0.2066769674545513, -0.18891163990135018, -0.18891163990135018, 0.22755336580436908, 0.22755336580436908, 0.020946759663457885, -0.4133539349091026, -0.2066769674545513, -0.2066769674545513, 0.22936035454574727, 0.22936035454574727, -0.19209415276621586, -0.19209415276621586, -0.1737159233734694, -0.1737159233734694, -0.019508965936781374, -0.2116262257772179, 0.19895040856016583, 0.19895040856016583, 0.19895040856016583, -0.20050179494313866, -0.20050179494313866, 0.005596179432841736, 0.22886064691469296, -0.2116262257772179, -0.17053329460747157, -0.17053329460747157, -0.20232004620501623, -0.20232004620501623, -0.4010035898862773, -0.20050179494313866, -0.20050179494313866, -0.17333727854452893, -0.19209415276621586, -0.19209415276621586, -0.2066769674545513, -0.2066769674545513, 0.8089826797548932, 0.2160836484044734, 0.22886064691469296, 0.1945909093470883, -0.2066769674545513, 0.19014165274118816, -0.20745893444915375, 0.49076609489902223, 0.22345051601485302, 0.21123725146878963, 0.22936035454574727, 0.19895040856016583, 0.19895040856016583, -0.20745893444915375, -0.20745893444915375, -0.20232004620501623, -0.20232004620501623, -0.20232004620501623, -0.20232004620501623, 0.4321672968089468, 0.2160836484044734, 0.2160836484044734, 0.22936035454574727, 0.22936035454574727, -0.19209415276621586, -0.19209415276621586, -0.20726530599824944, -0.20726530599824944, -0.20232004620501623, -0.20232004620501623, 0.4763347808931818, 0.2381673904465909, 0.2381673904465909, -0.16699032449628812, -0.16699032449628812, 0.22755336580436908, 0.22755336580436908, 0.4476215690940619, 0.4476215690940619, 0.22381078454703096, 0.22381078454703096, -0.17053329460747157, -0.17053329460747157, -0.20232004620501623, -0.20232004620501623, -0.16279365076508157, -0.16279365076508157, -0.18612736436220223, -0.1769562845813354, -0.1769562845813354, -0.1769562845813354, -0.1769562845813354, 0.06137872538234727, -0.20050179494313866, 0.26185016328439015, -0.16279365076508157, -0.2066769674545513, -0.2066769674545513, -0.16279365076508157, -0.16279365076508157, -0.18612736436220223, -0.18612736436220223, 0.2160836484044734, 0.2160836484044734, 0.22936035454574727, 0.22936035454574727, -0.18891163990135018, -0.18891163990135018, 0.22886064691469296, -0.20232004620501623, -0.20232004620501623, -0.1894028452989547, -0.1894028452989547, -0.16279365076508157, -0.16279365076508157, -0.2116262257772179, -0.2116262257772179, -0.17333727854452893, -0.17333727854452893, -0.16699032449628812, -0.16699032449628812, 0.26185016328439015, 0.26185016328439015, -0.19209415276621586, -0.19209415276621586, 0.1945909093470883, 0.1945909093470883, 0.24538304744951112, 0.24538304744951112, -0.16699032449628812, -0.16699032449628812, -0.1894028452989547, -0.1894028452989547, 0.40172610672597786, 0.2285561626268992, 0.2381673904465909, -0.20398202163082266, -0.20398202163082266, 0.19692339941652434, 0.19692339941652434, -0.4149178688983075, -0.20745893444915375, -0.20745893444915375, -0.17053329460747157, -0.17053329460747157, -0.3127990635506998, -0.17053329460747157, -0.19209415276621586, 0.21051083551604363, 0.21051083551604363, -0.2116262257772179, -0.2116262257772179, -0.2116262257772179, -0.2116262257772179, -0.18947414712380628, -0.18947414712380628, -0.5361738246748295, -0.20823051758599323, -0.20726530599824944, -0.20726530599824944, -0.18947414712380628, -0.18947414712380628, -0.20823051758599323, -0.20823051758599323, -0.17112846910061202, -0.17112846910061202, 0.1945909093470883, 0.1945909093470883, -0.18612736436220223, -0.18612736436220223, -0.00744985201404553, -0.20050179494313866, 0.19692339941652434, -0.20398202163082266, -0.20398202163082266, -0.18612736436220223, -0.18612736436220223, -0.16279365076508157, -0.16279365076508157, -0.4149892074355673, -0.20726530599824944, -0.20823051758599323, 0.22886064691469296, 0.22886064691469296, -0.20823051758599323, -0.20726530599824944, -0.18947414712380628, -0.20232004620501623, -0.20232004620501623, 0.28716581143826975, 0.28716581143826975, -0.16699032449628812, -0.16699032449628812, -0.18612736436220223, -0.18612736436220223, -0.17112846910061202, -0.17112846910061202, -0.1894028452989547, -0.1894028452989547, 0.23597155099346703, 0.24220184632031153, 0.24220184632031153, -0.20232004620501623, -0.1769562845813354, -0.1769562845813354, 0.26185016328439015, 0.26185016328439015, 0.37503104973583556, 0.24538304744951112, 0.19014165274118816, -0.20398202163082266, -0.20398202163082266, 0.21051083551604363, 0.21051083551604363, -0.3399218376456744, -0.20726530599824944, -0.18891163990135018, -0.16699032449628812, -0.20745893444915375, -0.20745893444915375, 0.22345051601485302, 0.22345051601485302, -0.3582230455690199, -0.2116262257772179, -0.2066769674545513, 0.1945909093470883, 0.1945909093470883, 0.01518700722529733, 0.22936035454574727, -0.2116262257772179, -0.2066769674545513, -0.2066769674545513, 0.28716581143826975, 0.28716581143826975, 0.23000613813916862, 0.23000613813916862, 0.19692339941652434, 0.19692339941652434, -0.19209415276621586, -0.19209415276621586, -0.1737159233734694, -0.1737159233734694, 0.22345051601485302, 0.22345051601485302, 0.24538304744951112, 0.24538304744951112, 0.19692339941652434, 0.19692339941652434, 0.7898869723623319, 0.2381673904465909, 0.2381673904465909, 0.19692339941652434, 0.19571279360053173, 0.22755336580436908, 0.3658214367011361, 0.19692339941652434, 0.22755336580436908, -0.17333727854452893, -0.17333727854452893, 0.2285561626268992, 0.2285561626268992, 0.2285561626268992, 0.2285561626268992, -0.18612736436220223, -0.18612736436220223, 0.24538304744951112, 0.24538304744951112, -0.1894028452989547, -0.1894028452989547, -0.17112846910061202, 0.23000613813916862, 0.23000613813916862, 0.013597047752241817, 0.2285561626268992, -0.20726530599824944, 0.1945909093470883, 0.1945909093470883, -0.19209415276621586, -0.19209415276621586, 0.013597047752241817, 0.2285561626268992, -0.20726530599824944, -0.1769562845813354, -0.1769562845813354, -0.17112846910061202, -0.17112846910061202, 0.2160836484044734, 0.2160836484044734, -0.19209415276621586, -0.19209415276621586, 0.07269159299726068, 0.42167100298757476, -0.1769562845813354, -0.2066769674545513, -0.17053329460747157, -0.17053329460747157, -0.17333727854452893, -0.17333727854452893, 0.6296276944607279, 0.2160836484044734, 0.1945909093470883, 0.23000613813916862, 0.2381673904465909, 0.4686814654107784, 0.26185016328439015, 0.28716581143826975, -0.1737159233734694, -0.1737159233734694, -0.1769562845813354, -0.1769562845813354, -0.6334880850682274, -0.1737159233734694, -0.1894028452989547, -0.2116262257772179, -0.20745893444915375, -0.3126854728562287, -0.17333727854452893, -0.18891163990135018, 0.5277475268406969, 0.22936035454574727, 0.1945909093470883, 0.1945909093470883, -0.17053329460747157, -0.17053329460747157, 0.5311090051395171, 0.19692339941652434, 0.22755336580436908, 0.19692339941652434, -0.2116262257772179, -0.2116262257772179, -0.3290769664805526, -0.17112846910061202, -0.20823051758599323, -0.43691001419942616, -0.17053329460747157, -0.17053329460747157, -0.16279365076508157, 0.28716581143826975, 0.28716581143826975, 0.28716581143826975, 0.28716581143826975, -0.17112846910061202, -0.17112846910061202, -0.20232004620501623, -0.20232004620501623, -0.2066769674545513, -0.2066769674545513, 0.21123725146878963, 0.21123725146878963, 0.24220184632031153, 0.24220184632031153, 0.3802833054823763, 0.19014165274118816, 0.19014165274118816, -0.20823051758599323, -0.20823051758599323, 0.39790081712033165, 0.19895040856016583, 0.19895040856016583, 0.21051083551604363, 0.21051083551604363, 0.21051083551604363, 0.21051083551604363, 0.2160836484044734, 0.2160836484044734, -0.3266611588131776, -0.16699032449628812, -0.2116262257772179, -0.5856813068288694, -0.18891163990135018, -0.20398202163082266, -0.18612736436220223, -0.18612736436220223, -0.17333727854452893, -0.17333727854452893, -0.17333727854452893, -0.17333727854452893, 0.24538304744951112, 0.24538304744951112, 0.1777857067511747, 0.19895040856016583, -0.2116262257772179, 0.24538304744951112, 0.19014165274118816, 0.19014165274118816, -0.5735161537221034, -0.20745893444915375, -0.33398064899257623, -0.20050179494313866, -0.20050179494313866, -0.20050179494313866, -0.34157769307545593, -0.20726530599824944, -0.18947414712380628, -0.19209415276621586, -0.19209415276621586, -0.17053329460747157, -0.17053329460747157, -0.20232004620501623, -0.20232004620501623, -0.20232004620501623, -0.20232004620501623, -0.1769562845813354, -0.1769562845813354, -0.18612736436220223, -0.18612736436220223, 0.19571279360053173, 0.19571279360053173, -0.44277725981443794, -0.18947414712380628, -0.18891163990135018, -0.19209415276621586, 0.22936035454574727, 0.22936035454574727, 0.05143675267204494, 0.26185016328439015, -0.2066769674545513, 0.22886064691469296, 0.22886064691469296, 0.24220184632031153, 0.24220184632031153, 0.24220184632031153, 0.24220184632031153, -0.18891163990135018, -0.18891163990135018, 0.22886064691469296, 0.22886064691469296, 0.22886064691469296, 0.22886064691469296, -0.17333727854452893, -0.17333727854452893, -0.20050179494313866, -0.20050179494313866, -0.34171394932693977, -0.18612736436220223, -0.2066769674545513, -0.2066769674545513, -0.16699032449628812, -0.16699032449628812, -0.20232004620501623, -0.20232004620501623, -0.20232004620501623, -0.20232004620501623, -0.18947414712380628, -0.18947414712380628, 0.49076609489902223, 0.24538304744951112, 0.24538304744951112, -0.1769562845813354, -0.1769562845813354, -0.17053329460747157, -0.17053329460747157, -0.18947414712380628, -0.18947414712380628, -0.20745893444915375, -0.2066769674545513, -0.2066769674545513, -0.2066769674545513, -0.2066769674545513, -0.018553986005952407, -0.20745893444915375, 0.22345051601485302, 0.22755336580436908, 0.22755336580436908, 0.46001227627833724, 0.23000613813916862, 0.23000613813916862, 0.3689069873646038, 0.23000613813916862, 0.19692339941652434, 0.23000613813916862, 0.23000613813916862, -0.2066769674545513, -0.2066769674545513, 0.19951524019756436, 0.21123725146878963, 0.21123725146878963, -0.19209415276621586, -0.18947414712380628, -0.18947414712380628, 0.39790081712033165, 0.19895040856016583, 0.19895040856016583, -0.20232004620501623, -0.20232004620501623, -0.18947414712380628, 0.516426302709208, 0.19014165274118816, 0.22381078454703096, 0.19014165274118816, 0.2285561626268992, 0.2285561626268992, -0.37782327980270036, -0.18891163990135018, -0.18891163990135018, -0.18891163990135018, -0.18891163990135018, -0.3127990635506998, -0.19209415276621586, -0.17053329460747157, -0.1894028452989547, -0.1894028452989547, 0.42102167103208726, 0.42102167103208726, 0.2160836484044734, 0.2160836484044734, -0.20745893444915375, -0.20745893444915375, -0.18947414712380628, -0.18947414712380628, -0.3031212077415204, -0.16279365076508157, -0.18891163990135018, -0.19209415276621586, -0.19209415276621586, -0.17333727854452893, -0.17333727854452893, 0.39142558720106346, 0.19571279360053173, 0.19571279360053173, 0.22936035454574727, 0.22936035454574727, 0.28716581143826975, 0.28716581143826975, -0.2066769674545513, -0.2066769674545513, -0.15886860658841118, -0.20726530599824944, 0.23000613813916862, -0.20726530599824944, -0.20232004620501623, -0.20232004620501623, -0.18891163990135018, -0.18891163990135018, -0.20050179494313866, -0.20050179494313866, -0.1894028452989547, -0.1894028452989547, -0.17112846910061202, -0.17112846910061202, 0.23000613813916862, 0.23000613813916862, -0.3539125691626708, -0.1769562845813354, -0.1769562845813354, -0.3474318467469388, -0.1737159233734694, -0.1737159233734694, -0.18891163990135018, -0.18891163990135018, 0.22345051601485302, 0.22345051601485302, -0.20823051758599323, -0.20823051758599323, 0.4321672968089468, 0.2160836484044734, 0.2160836484044734, 0.22345051601485302, 0.22345051601485302, -0.17333727854452893, -0.17333727854452893, 0.19895040856016583, 0.19895040856016583, 0.003650669943673372, 0.19014165274118816, -0.1769562845813354, -0.16699032449628812, -0.16699032449628812, 0.012368405659547489, 0.1945909093470883, -0.17053329460747157, 0.36649266613943976, -0.16699032449628812, -0.16699032449628812, -0.1737159233734694, -0.1737159233734694, 0.24220184632031153, 0.24220184632031153, -0.19209415276621586, -0.19209415276621586, -0.1894028452989547, -0.1894028452989547, 0.22381078454703096, 0.22381078454703096, 0.22755336580436908, 0.22755336580436908, 0.22755336580436908, 0.22755336580436908, 0.22755336580436908, 0.22755336580436908, -0.18612736436220223, -0.18612736436220223, 0.4763347808931818, 0.4763347808931818, 0.34981162373266184, 0.24538304744951112, 0.22936035454574727, 0.1945909093470883, -0.19209415276621586, 0.24538304744951112, 0.24538304744951112, 0.19014165274118816, 0.19014165274118816, -0.20745893444915375, -0.20745893444915375, 0.19014165274118816, 0.19014165274118816, -0.29181604508515013, -0.17333727854452893, -0.16279365076508157, -0.20745893444915375, -0.20745893444915375, -0.5495914325264648, -0.20398202163082266, -0.2066769674545513, -0.1769562845813354, -0.1894028452989547, 0.45872070909149454, 0.22936035454574727, 0.22936035454574727, -0.32558730153016313, -0.16279365076508157, -0.16279365076508157, 0.2160836484044734, 0.2160836484044734, 0.2160836484044734, 0.2160836484044734, -0.17053329460747157, -0.17053329460747157, 0.21051083551604363, 0.21051083551604363, -0.17112846910061202, -0.17112846910061202, 0.22381078454703096, 0.3862269921023935, 0.22345051601485302, 0.22755336580436908, -0.18612736436220223, -0.18612736436220223, -0.20398202163082266, -0.20398202163082266, -0.17053329460747157, -0.17053329460747157, -0.1894028452989547, -0.1894028452989547, 0.21051083551604363, 0.21051083551604363, -0.6554291423437496, -0.19209415276621586, -0.19209415276621586, -0.37782327980270036, -0.1894028452989547, -0.1894028452989547, -0.16699032449628812, -0.16699032449628812, -0.17112846910061202, -0.17112846910061202, -0.32337872323873734, -0.18947414712380628, -0.18612736436220223, -0.20232004620501623, -0.20232004620501623, -0.1894028452989547, -0.1894028452989547, -0.30027674156208994, -0.17333727854452893, -0.1737159233734694, -0.2066769674545513, -0.2066769674545513, -0.20232004620501623, -0.20232004620501623, -0.1024758708532187, -0.20823051758599323, -0.20050179494313866, 0.26185016328439015, 0.19571279360053173, 0.19571279360053173, 0.510802698702004, 0.2160836484044734, 0.22886064691469296, 0.21123725146878963, 0.28716581143826975, 0.28716581143826975, -0.17053329460747157, -0.17053329460747157, -0.1894028452989547, -0.1894028452989547];
+const MODEL_INTERCEPT = 0.0407533928365228;
+const TOP_FEATURES = [{"word": "government", "weight": -1.0718310035237613}, {"word": "new", "weight": 0.8089826797548932}, {"word": "rate", "weight": 0.7898869723623319}, {"word": "allegedly", "weight": -0.6924578948272633}, {"word": "water", "weight": -0.6554291423437496}, {"word": "research", "weight": -0.6334880850682274}, {"word": "document", "weight": -0.6303904670704576}, {"word": "reported", "weight": 0.6296276944607279}, {"word": "says", "weight": -0.5856813068288694}, {"word": "secret", "weight": -0.5735161537221034}, {"word": "used", "weight": -0.5495914325264648}, {"word": "leaked", "weight": -0.5447566028574767}, {"word": "plan", "weight": -0.5361738246748295}, {"word": "claims", "weight": -0.5347951976494747}, {"word": "entire", "weight": -0.5311978138279568}, {"word": "reserve", "weight": 0.5311090051395171}, {"word": "federal reserve", "weight": 0.5311090051395171}, {"word": "researchers", "weight": 0.5277475268406969}, {"word": "global malaria", "weight": 0.5237003265687803}, {"word": "malaria", "weight": 0.5237003265687803}, {"word": "summer", "weight": 0.516426302709208}, {"word": "international", "weight": 0.516426302709208}, {"word": "cancer", "weight": -0.5115998838224151}, {"word": "year", "weight": 0.510802698702004}, {"word": "announced", "weight": 0.4923887205583024}, {"word": "species", "weight": 0.49076609489902223}, {"word": "new species", "weight": 0.49076609489902223}, {"word": "data", "weight": 0.4868572106558491}, {"word": "infrastructure", "weight": 0.48440369264062305}, {"word": "unemployment", "weight": 0.4763347808931818}, {"word": "october", "weight": 0.4763347808931818}, {"word": "unemployment rate", "weight": 0.4763347808931818}, {"word": "reports", "weight": 0.4686814654107784}, {"word": "earnings", "weight": 0.46001227627833724}, {"word": "stock", "weight": 0.46001227627833724}, {"word": "vaccine", "weight": 0.45872070909149454}, {"word": "hiv", "weight": 0.45872070909149454}, {"word": "census", "weight": 0.4577212938293859}, {"word": "carbon", "weight": 0.4571123252537984}, {"word": "agreement", "weight": 0.4571123252537984}, {"word": "common", "weight": -0.4564524659961148}, {"word": "breaking", "weight": -0.4556445095535981}, {"word": "laboratory", "weight": -0.45542700019520793}, {"word": "olympic", "weight": 0.4476215690940619}, {"word": "host city", "weight": 0.4476215690940619}, {"word": "olympic committee", "weight": 0.4476215690940619}, {"word": "host", "weight": 0.4476215690940619}, {"word": "city council", "weight": 0.44690103202970605}, {"word": "council", "weight": 0.44690103202970605}, {"word": "expansion", "weight": 0.44690103202970605}, {"word": "growth", "weight": 0.4451620646831382}, {"word": "shocking", "weight": -0.44277725981443794}, {"word": "dna", "weight": -0.44247462293827317}, {"word": "reveals", "weight": -0.43691001419942616}, {"word": "exposed", "weight": -0.4327202220203514}, {"word": "hidden", "weight": -0.4327202220203514}, {"word": "electric", "weight": 0.4321672968089468}, {"word": "traditional", "weight": 0.4321672968089468}, {"word": "norway", "weight": 0.4321672968089468}, {"word": "exclusive", "weight": -0.42549984961630893}];
+const METRICS = {"accuracy": 100.0, "fake_precision": 100.0, "fake_recall": 100.0, "fake_f1": 100.0, "real_precision": 100.0, "real_recall": 100.0, "real_f1": 100.0, "confusion_matrix": [[40, 0], [0, 40]], "train_samples": 320, "test_samples": 80};
+
+// ═══════════════════════════════════════════════════════════
+// TF-IDF + LOGISTIC REGRESSION INFERENCE (JS reimplementation)
+// ═══════════════════════════════════════════════════════════
+
+function tokenize(text) {
+  text = text.toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = text.split(' ').filter(w => w.length > 1);
+  
+  const stopwords = new Set(['the','a','an','and','or','but','in','on','at','to','for',
+    'of','with','by','from','is','are','was','were','be','been','being','have','has',
+    'had','do','does','did','will','would','could','should','may','might','shall',
+    'can','it','its','this','that','these','those','i','we','you','he','she','they',
+    'me','him','her','us','them','my','your','his','our','their','what','which',
+    'who','whom','when','where','why','how','all','both','each','few','more','most',
+    'other','some','such','no','not','only','same','so','than','too','very','just',
+    'as','into','through','during','before','after','above','below','between','out',
+    'up','down','then','once','here','there','any','also','about','over','still']);
+  
+  const tokens = [];
+  const filtered = words.filter(w => !stopwords.has(w) && w.length > 2);
+  
+  // Unigrams
+  for (const w of filtered) tokens.push(w);
+  // Bigrams
+  for (let i = 0; i < filtered.length - 1; i++) tokens.push(filtered[i] + ' ' + filtered[i+1]);
+  
+  return tokens;
+}
+
+function tfidfVector(text) {
+  const tokens = tokenize(text);
+  const tf = {};
+  for (const t of tokens) tf[t] = (tf[t] || 0) + 1;
+  
+  const vec = new Float64Array(MODEL_IDF.length);
+  let norm = 0;
+  
+  for (const [term, count] of Object.entries(tf)) {
+    const idx = MODEL_VOCAB[term];
+    if (idx !== undefined) {
+      const tfidf = (count / tokens.length) * MODEL_IDF[idx];
+      vec[idx] = tfidf;
+      norm += tfidf * tfidf;
+    }
+  }
+  
+  // L2 normalize
+  if (norm > 0) {
+    norm = Math.sqrt(norm);
+    for (let i = 0; i < vec.length; i++) vec[i] /= norm;
+  }
+  
+  return vec;
+}
+
+function sigmoid(x) {
+  return 1 / (1 + Math.exp(-x));
+}
+
+function predict(title, text) {
+  const combined = (title + ' ' + text).replace(/[^a-zA-Z\s]/g, '').toLowerCase();
+  const vec = tfidfVector(combined);
+  
+  let score = MODEL_INTERCEPT;
+  for (let i = 0; i < MODEL_COEF.length; i++) score += vec[i] * MODEL_COEF[i];
+  
+  // label=1 is REAL (positive class)
+  const probReal = sigmoid(score);
+  const probFake = 1 - probReal;
+  
+  const label = probReal >= 0.5 ? 'REAL' : 'FAKE';
+  const confidence = label === 'REAL' ? probReal : probFake;
+  
+  // Find active signal words
+  const tokens = tokenize(combined);
+  const signalWords = [];
+  const seen = new Set();
+  
+  for (const t of tokens) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    const idx = MODEL_VOCAB[t];
+    if (idx !== undefined && Math.abs(MODEL_COEF[idx]) > 0.1) {
+      signalWords.push({ word: t, weight: MODEL_COEF[idx] });
+    }
+  }
+  
+  signalWords.sort((a,b) => Math.abs(b.weight) - Math.abs(a.weight));
+  
+  return { label, confidence, probReal, probFake, signalWords: signalWords.slice(0, 12) };
+}
+
+// ═══════════════════════════════════════════════════════════
+// UI
+// ═══════════════════════════════════════════════════════════
+
+const samples = {
+  real1: {
+    title: "Federal Reserve Raises Interest Rates by 0.25%",
+    text: "The Federal Reserve announced a quarter-point interest rate hike citing persistent inflation and strong labor market conditions in its latest policy meeting. Officials voted unanimously to implement the change, which takes effect immediately."
+  },
+  real2: {
+    title: "Scientists Discover New Species in Amazon Rainforest",
+    text: "Biologists from the University of São Paulo announced the discovery of 17 new species of insects previously unknown to science during a recent expedition deep into the Amazon basin. The research was published in the journal Nature Ecology."
+  },
+  fake1: {
+    title: "SHOCKING: Government Secretly Spraying Mind-Control Chemicals from Planes",
+    text: "A whistleblower pilot came forward with stunning evidence that contrails left by commercial aircraft contain a special chemical compound designed to make the population more susceptible to government suggestion and control. The leaked document allegedly originated inside the Pentagon."
+  },
+  fake2: {
+    title: "EXPOSED: Top Doctor Reveals Hidden Cancer Cure Big Pharma Doesn't Want You to Know",
+    text: "A renowned oncologist reveals in an exclusive video that a natural compound found in fruit seeds destroys cancer cells in 24 hours, but pharmaceutical companies have suppressed the research for decades. Anonymous sources confirm the cover-up."
+  }
+};
+
+const loadingMessages = [
+  "Vectorizing text corpus...",
+  "Computing TF-IDF weights...",
+  "Running logistic regression...",
+  "Extracting signal features...",
+  "Calibrating confidence score...",
+];
+
+let history = [];
+let msgIdx = 0, msgTimer;
+
+function loadSample(key) {
+  const s = samples[key];
+  document.getElementById('title-input').value = s.title;
+  document.getElementById('text-input').value = s.text;
+  updateCharCount();
+}
+
+function clearAll() {
+  document.getElementById('title-input').value = '';
+  document.getElementById('text-input').value = '';
+  document.getElementById('result').classList.remove('visible');
+  updateCharCount();
+}
+
+function updateCharCount() {
+  const n = document.getElementById('text-input').value.length;
+  document.getElementById('char-count').textContent = n + ' chars';
+}
+
+document.getElementById('text-input').addEventListener('input', updateCharCount);
+document.getElementById('title-input').addEventListener('keydown', e => { if(e.key==='Enter') analyze(); });
+
+function showLoading(show) {
+  document.getElementById('loading').classList.toggle('active', show);
+  if (show) {
+    msgIdx = 0;
+    clearInterval(msgTimer);
+    document.getElementById('loading-text').textContent = loadingMessages[0];
+    msgTimer = setInterval(() => {
+      msgIdx = (msgIdx + 1) % loadingMessages.length;
+      document.getElementById('loading-text').textContent = loadingMessages[msgIdx];
+    }, 400);
+  } else {
+    clearInterval(msgTimer);
+  }
+}
+
+function analyze() {
+  const title = document.getElementById('title-input').value.trim();
+  const text = document.getElementById('text-input').value.trim();
+  
+  if (!title && !text) {
+    document.getElementById('title-input').focus();
+    document.getElementById('title-input').style.borderColor = 'var(--accent-fake)';
+    setTimeout(() => document.getElementById('title-input').style.borderColor = '', 1500);
+    return;
+  }
+  
+  document.getElementById('result').classList.remove('visible');
+  showLoading(true);
+  
+  setTimeout(() => {
+    showLoading(false);
+    const result = predict(title, text);
+    displayResult(result, title, text);
+    addHistory(result, title || text);
+  }, 1800);
+}
+
+function displayResult(result, title, text) {
+  const { label, confidence, probReal, probFake, signalWords } = result;
+  
+  // Verdict
+  const badge = document.getElementById('verdict-badge');
+  badge.className = 'verdict-badge ' + label;
+  badge.textContent = label;
+  
+  document.getElementById('result-icon').textContent = label === 'REAL' ? '✅' : '⛔';
+  
+  // Confidence bar
+  const confPct = Math.round(confidence * 100);
+  document.getElementById('conf-value').textContent = confPct + '%';
+  document.getElementById('conf-value').style.color = label === 'REAL' ? 'var(--accent-real)' : 'var(--accent-fake)';
+  
+  const bar = document.getElementById('conf-bar');
+  bar.className = 'confidence-bar ' + label;
+  setTimeout(() => bar.style.width = confPct + '%', 50);
+  
+  // Gauge bars
+  const fpct = Math.round(probFake * 100);
+  const rpct = Math.round(probReal * 100);
+  
+  document.getElementById('prob-fake-val').textContent = fpct + '%';
+  document.getElementById('prob-real-val').textContent = rpct + '%';
+  setTimeout(() => {
+    document.getElementById('prob-fake-bar').style.width = fpct + '%';
+    document.getElementById('prob-real-bar').style.width = rpct + '%';
+  }, 100);
+  
+  // Signal tokens
+  const tokenContainer = document.getElementById('feature-tokens');
+  tokenContainer.innerHTML = '';
+  
+  if (signalWords.length === 0) {
+    tokenContainer.innerHTML = '<span style="color:var(--text-dim);font-size:0.7rem">No strong signal words detected</span>';
+  } else {
+    signalWords.forEach((sw, i) => {
+      const isFakeSignal = sw.weight < 0;
+      const span = document.createElement('span');
+      span.className = 'feature-token ' + (isFakeSignal ? 'fake-signal' : 'real-signal');
+      span.textContent = sw.word;
+      span.style.animationDelay = (i * 0.05) + 's';
+      span.title = (isFakeSignal ? '⚠ Fake indicator' : '✓ Real indicator') + ' (weight: ' + sw.weight.toFixed(3) + ')';
+      tokenContainer.appendChild(span);
+    });
+  }
+  
+  document.getElementById('result').classList.add('visible');
+}
+
+function addHistory(result, snippet) {
+  history.unshift({
+    label: result.label,
+    confidence: Math.round(result.confidence * 100),
+    snippet: snippet.substring(0, 60) + (snippet.length > 60 ? '…' : '')
+  });
+  
+  if (history.length > 5) history.pop();
+  
+  const sec = document.getElementById('history-section');
+  const list = document.getElementById('history-list');
+  sec.style.display = 'block';
+  list.innerHTML = '';
+  
+  history.forEach((h, i) => {
+    const div = document.createElement('div');
+    div.className = 'history-item';
+    div.style.animationDelay = (i * 0.05) + 's';
+    div.innerHTML = `
+      <span class="history-badge ${h.label}">${h.label}</span>
+      <span class="history-text">${h.snippet}</span>
+      <span class="history-pct">${h.confidence}%</span>
+    `;
+    list.appendChild(div);
+  });
+}
+
+// Render top features chart
+function renderFeatureList() {
+  const list = document.getElementById('feature-list');
+  const topFake = TOP_FEATURES.filter(f => f.weight < 0).slice(0,4);
+  const topReal = TOP_FEATURES.filter(f => f.weight > 0).slice(0,4);
+  const items = [...topFake.map(f => ({...f, type:'fake'})), ...topReal.map(f => ({...f, type:'real'}))];
+  const maxW = Math.max(...items.map(f => Math.abs(f.weight)));
+  
+  list.innerHTML = '';
+  items.forEach((f, i) => {
+    const pct = Math.round((Math.abs(f.weight) / maxW) * 100);
+    const div = document.createElement('div');
+    div.className = 'feat-row';
+    div.innerHTML = `
+      <span class="feat-word" style="color:${f.type==='fake'?'var(--accent-fake)':'var(--accent-real)'}">${f.word}</span>
+      <div class="feat-bar-bg">
+        <div class="feat-bar-fill feat-${f.type}" data-pct="${pct}" style="width:0"></div>
+      </div>
+      <span class="feat-val">${f.weight.toFixed(2)}</span>
+    `;
+    list.appendChild(div);
+  });
+  
+  setTimeout(() => {
+    document.querySelectorAll('.feat-bar-fill').forEach((el, i) => {
+      setTimeout(() => el.style.width = el.dataset.pct + '%', i * 80);
+    });
+  }, 300);
+}
+
+// Init
+renderFeatureList();
+async function analyzeURL() {
+
+    const url =
+    document.getElementById("newsURL").value;
+
+    const response = await fetch(
+    "http://127.0.0.1:5000/analyze-url",
+    {
+        method: "POST",
+
+        headers: {
+            "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+            url: url
+        })
+    });
+
+    const data = await response.json();
+
+    alert(
+        "Prediction: " + data.prediction
+    );
+
+    console.log(data);
+}
+</script>
+</body>
+</html>
